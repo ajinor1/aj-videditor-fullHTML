@@ -2,7 +2,7 @@
 ### 学校のパソコンでGitHubPagesがブロックされて開けない難民向けの救済
 ### index.htmlをダウンロードして開くだけ
 
-### 普通にGitHubPages版使いたい人はこっち（優しすぎ）（神）
+### 普通にGitHubPages版使いたい人はこっち(優しすぎ)(神)
 
 ### https://github.com/ajinor1/aj-videditor
 
