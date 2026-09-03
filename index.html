@@ -1,2343 +1,1369 @@
-// ============================================================
-// AJ Video Editor - エントリーポイント
-// ============================================================
-
-// -------- 定数 --------
-const TIMELINE_DURATION = 20
-const DEFAULT_FONT = '"Hiragino Sans", "Microsoft YaHei", sans-serif'
-const TIMELINE_HEIGHT = 32
-const TIMELINE_PADDING_LEFT = 80
-const TIMELINE_PADDING_RIGHT = 20
-const TIMELINE_HEADER_HEIGHT = 28
-const MAX_LAYERS = 99
-const DEFAULT_LAYER_COUNT = 10
-
-// -------- 初期設定 --------
-const CONFIG = {
-  preventOverlap: true,
-  theme: "white",
-  bgColor: "#000000",
-  layerCount: DEFAULT_LAYER_COUNT,
-  resolution: { width: 1920, height: 1080 },
-  fps: 60
-}
-
-// -------- configを参照する定数 --------
-const totalFrames = TIMELINE_DURATION * CONFIG.fps
-const DEFAULT_CLIP_DURATION = 3 * CONFIG.fps
-
-// -------- クリップタイプごとの色 --------
-const CLIP_COLORS = {
-  // 青
-  text: "#0077ff",
-
-  // ピンク
-  // 今後追加: video: '#...', image: '#...'
-  shape: "#ff0055"
-}
-// 色の取得関数（後で拡張しやすいように）
-function getClipColor(type) {
-  return CLIP_COLORS[type] || "#888888" // 未定義の場合はグレー
-}
-
-// -------- スライダー拡張段階定義 --------
-const SLIDER_STAGES = {
-  coord: [500, 1000, 2000, 4000, 8000],
-  rotation: [180, 360, 720, 1440],
-  size: [100, 200, 400, 800, 1600, 3200],
-  stroke: [100, 200, 400, 800, 1600, 3200],
-  fontSize: [100, 200, 400, 800, 1600, 3200]
-}
-
-// -------- 数値入力の設定 --------
-const NUMBER_CONFIGS = {
-  x: { min: -8000, max: 8000, default: 0, stages: SLIDER_STAGES.coord },
-  y: { min: -8000, max: 8000, default: 0, stages: SLIDER_STAGES.coord },
-  rotation: {
-    min: -1440,
-    max: 1440,
-    default: 0,
-    stages: SLIDER_STAGES.rotation
-  },
-  width: { min: 0, max: 3200, default: 100, stages: SLIDER_STAGES.size },
-  height: { min: 0, max: 3200, default: 100, stages: SLIDER_STAGES.size },
-  stroke: { min: 0, max: 3200, default: 0, stages: SLIDER_STAGES.stroke },
-  fontSize: { min: 0, max: 3200, default: 50, stages: SLIDER_STAGES.fontSize },
-  start: { min: 0, max: 600, default: 0, stages: null },
-  duration: { min: 1, max: 600, default: 90, stages: null }
-}
-
-// -------- 汎用関数 --------
-function getSliderMax(value, stages) {
-  const abs = Math.abs(value)
-  for (const stage of stages) {
-    if (abs < stage) return stage
-  }
-  return stages[stages.length - 1]
-}
-
-function updateSliderRange(slider, value, stages, isDragging) {
-  if (isDragging) return
-  const max = getSliderMax(value, stages)
-  slider.min = String(-max)
-  slider.max = String(max)
-}
-
-function updateSliderRangePositive(slider, value, stages, isDragging) {
-  if (isDragging) return
-  const max = getSliderMax(value, stages)
-  slider.min = "0"
-  slider.max = String(max)
-}
-
-// -------- 共通数値入力処理 --------
-function setupNumberInput(input, slider, config) {
-  input.addEventListener("click", () => input.select())
-  input.addEventListener("focus", () => input.select())
-
-  input.addEventListener("keydown", e => {
-    if (e.key === "Enter") {
-      e.preventDefault()
-      commitNumberInput(input, slider, config)
-    }
-  })
-
-  input.addEventListener("change", () => {
-    commitNumberInput(input, slider, config)
-  })
-}
-
-function commitNumberInput(input, slider, config) {
-  let val = parseFloat(input.value)
-
-  if (isNaN(val) || input.value.trim() === "") {
-    val = config.default
-  }
-
-  val = Math.max(config.min, Math.min(config.max, val))
-
-  slider.value = String(val)
-  input.value = String(val)
-
-  if (config.stages) {
-    config.updateSliderRangeFn(val)
-  }
-
-  config.onCommit(val)
-
-  input.blur()
-}
-
-// -------- スライダードラッグ制御（共通化） --------
-function setupSliderDrag(slider, onStart, onEnd) {
-  const start = () => {
-    onStart()
-  }
-  const end = () => {
-    onEnd()
-  }
-
-  slider.addEventListener("mousedown", start)
-  slider.addEventListener("mouseup", end)
-  slider.addEventListener("mouseleave", end)
-  slider.addEventListener("touchstart", start)
-  slider.addEventListener("touchend", end)
-  slider.addEventListener("touchcancel", end)
-}
-
-// -------- テーマ定義 --------
-const THEMES = {
-  white: {
-    bg: "#f5f5f5",
-    secondary: "#e8e8e8",
-    card: "#ffffff",
-    text: "#222222",
-    textSecondary: "#666666",
-    border: "#d0d0d0",
-    accent: "#f5576c"
-  },
-  "white-red": {
-    bg: "#fff5f5",
-    secondary: "#f5e8e8",
-    card: "#ffffff",
-    text: "#331111",
-    textSecondary: "#884444",
-    border: "#e0c8c8",
-    accent: "#e74c3c"
-  },
-  "white-blue": {
-    bg: "#f0f5ff",
-    secondary: "#e8edf5",
-    card: "#ffffff",
-    text: "#111833",
-    textSecondary: "#445588",
-    border: "#c8d8e8",
-    accent: "#3498db"
-  },
-  "white-green": {
-    bg: "#f0fff5",
-    secondary: "#e8f5ed",
-    card: "#ffffff",
-    text: "#113311",
-    textSecondary: "#448844",
-    border: "#c8e0d0",
-    accent: "#2ecc71"
-  },
-  "white-yellow": {
-    bg: "#fffdf0",
-    secondary: "#f5f0e8",
-    card: "#ffffff",
-    text: "#332b11",
-    textSecondary: "#887744",
-    border: "#e8e0c8",
-    accent: "#f1c40f"
-  },
-  "white-purple": {
-    bg: "#f8f0ff",
-    secondary: "#f0e8f5",
-    card: "#ffffff",
-    text: "#1f1133",
-    textSecondary: "#664488",
-    border: "#d8c8e8",
-    accent: "#9b59b6"
-  },
-  black: {
-    bg: "#0d0d0d",
-    secondary: "#161616",
-    card: "#111111",
-    text: "#e0e0e0",
-    textSecondary: "#888888",
-    border: "#2a2a2a",
-    accent: "#f5576c"
-  },
-  "black-red": {
-    bg: "#1a0a0a",
-    secondary: "#221111",
-    card: "#1a0d0d",
-    text: "#e8d0d0",
-    textSecondary: "#aa8888",
-    border: "#3a2020",
-    accent: "#e74c3c"
-  },
-  "black-blue": {
-    bg: "#0a0d1a",
-    secondary: "#111822",
-    card: "#0d111a",
-    text: "#d0d8e8",
-    textSecondary: "#8899aa",
-    border: "#202a3a",
-    accent: "#3498db"
-  },
-  "black-green": {
-    bg: "#0a1a0d",
-    secondary: "#112211",
-    card: "#0d1a0d",
-    text: "#d0e8d0",
-    textSecondary: "#88aa88",
-    border: "#203a2a",
-    accent: "#2ecc71"
-  },
-  "black-yellow": {
-    bg: "#1a180a",
-    secondary: "#222211",
-    card: "#1a1a0d",
-    text: "#e8e0d0",
-    textSecondary: "#aa9966",
-    border: "#3a3820",
-    accent: "#f1c40f"
-  },
-  "black-purple": {
-    bg: "#120a1a",
-    secondary: "#1f1122",
-    card: "#1a0d1a",
-    text: "#e0d0e8",
-    textSecondary: "#9988aa",
-    border: "#2a203a",
-    accent: "#9b59b6"
-  }
-}
-
-// -------- DOM要素 --------
-const canvas = document.getElementById("canvas")
-const ctx = canvas.getContext("2d")
-
-const typeDisplay = document.getElementById("typeDisplay")
-const textProperties = document.getElementById("textProperties")
-const shapeProperties = document.getElementById("shapeProperties")
-
-const textInput = document.getElementById("textInput")
-const fontSelect = document.getElementById("fontSelect")
-const fontSizeSlider = document.getElementById("fontSize")
-const fontSizeLabel = document.getElementById("fontSizeLabel")
-const colorPicker = document.getElementById("colorPicker")
-
-const shapeTypeSelect = document.getElementById("shapeTypeSelect")
-const fillColorPicker = document.getElementById("fillColorPicker")
-const strokeColorPicker = document.getElementById("strokeColorPicker")
-const strokeWidthSlider = document.getElementById("strokeWidthSlider")
-const shapeWidthSlider = document.getElementById("shapeWidthSlider")
-const shapeHeightSlider = document.getElementById("shapeHeightSlider")
-
-const xSlider = document.getElementById("xPos")
-const xNumber = document.getElementById("xNumber")
-const ySlider = document.getElementById("yPos")
-const yNumber = document.getElementById("yNumber")
-const rotationSlider = document.getElementById("rotationSlider")
-const rotationNumber = document.getElementById("rotationNumber")
-const startInput = document.getElementById("startInput")
-const durationInput = document.getElementById("durationInput")
-
-const deleteBtn = document.getElementById("deleteBtn")
-const timelineContainer = document.getElementById("timelineContainer")
-
-const playBtn = document.getElementById("playBtn")
-const currentTimeDisplay = document.getElementById("currentTime")
-const totalTimeDisplay = document.getElementById("totalTime")
-
-const settingsToggle = document.getElementById("settingsToggle")
-const settingsOverlay = document.getElementById("settingsOverlay")
-const settingsClose = document.getElementById("settingsClose")
-const settingsCloseBtn = document.getElementById("settingsCloseBtn")
-const themeSelect = document.getElementById("themeSelect")
-const overlapToggle = document.getElementById("overlapToggle")
-const layerCountInput = document.getElementById("layerCountInput")
-const applyLayerCountBtn = document.getElementById("applyLayerCountBtn")
-const bgColorPicker = document.getElementById("bgColorPicker")
-const resolutionSelect = document.getElementById("resolutionSelect")
-const fpsSelect = document.getElementById("fpsSelect")
-
-// ズーム関連DOM（後で生成するので変数だけ先に宣言）
-let zoomInBtn
-let zoomOutBtn
-let zoomLevelDisplay
-
-// タブ用DOM
-const settingsTabs = document.getElementById("settingsTabs")
-const tabProject = document.getElementById("tabProject")
-const tabEditor = document.getElementById("tabEditor")
-
-// リサイズ用DOM
-const resizeHandleHorizontal = document.getElementById("resizeHandleHorizontal")
-const resizeHandleVertical = document.getElementById("resizeHandleVertical")
-const canvasWrapper = document.getElementById("canvasWrapper")
-const propertiesPanel = document.getElementById("propertiesPanel")
-const bottomSection = document.getElementById("bottomSection")
-
-// ★ 図形用数値入力
-const strokeWidthNumber = document.getElementById("strokeWidthNumber")
-const shapeWidthNumber = document.getElementById("shapeWidthNumber")
-const shapeHeightNumber = document.getElementById("shapeHeightNumber")
-
-// -------- キャンバスサイズ --------
-const MAX_COORD = 8000
-const MAX_ROTATION = 1440
-
-// -------- 状態 --------
-let clips = []
-let selectedId = null
-let idCounter = 0
-let currentFrame = 0
-let isPlaying = false
-let playInterval = null
-let currentLayerCount = CONFIG.layerCount
-
-// ★ ズーム関連
-let timelineZoom = 1.0
-const MIN_ZOOM = 0.25
-const MAX_ZOOM = 8.0
-
-// ドラッグ中フラグ
-let isDraggingX = false
-let isDraggingY = false
-let isDraggingRotation = false
-let isDraggingStroke = false
-let isDraggingWidth = false
-let isDraggingHeight = false
-let isDraggingFontSize = false
-
-let isSeeking = false
-
-let isDraggingClip = false
-let dragClipId = null
-let dragStartMouseX = 0
-let dragStartMouseY = 0
-let dragStartFrame = 0
-let dragStartLayer = 0
-let dragClipElement = null
-
-// プレビュードラッグ用
-let isDraggingPreview = false
-let dragPreviewClipId = null
-let dragPreviewStartX = 0
-let dragPreviewStartY = 0
-let dragPreviewOffsetX = 0
-let dragPreviewOffsetY = 0
-
-// リサイズ用状態
-let isResizingHorizontal = false
-let isResizingVertical = false
-let resizeStartX = 0
-let resizeStartY = 0
-let resizeStartWidth = 0
-let resizeStartHeight = 0
-const MIN_PANEL_WIDTH = 200
-const MIN_TIMELINE_HEIGHT = 80
-
-// -------- タブ切り替え --------
-function setupSettingsTabs() {
-  const tabs = settingsTabs.querySelectorAll("button")
-  const contents = {
-    project: tabProject,
-    editor: tabEditor
-  }
-
-  tabs.forEach(button => {
-    button.addEventListener("click", () => {
-      // タブのアクティブ状態を切り替え
-      tabs.forEach(b => b.classList.remove("active"))
-      button.classList.add("active")
-
-      // コンテンツの表示を切り替え
-      const tabName = button.dataset.tab
-      Object.entries(contents).forEach(([key, content]) => {
-        content.classList.toggle("active", key === tabName)
-      })
-    })
-  })
-}
-
-// -------- ユーティリティ --------
-function generateId() {
-  return `clip-${++idCounter}`
-}
-
-function getSelected() {
-  return clips.find(c => c.id === selectedId) || null
-}
-
-function setPropertiesEnabled(enabled) {
-  const inputs = [
-    textInput,
-    fontSelect,
-    fontSizeSlider,
-    colorPicker,
-    shapeTypeSelect,
-    fillColorPicker,
-    strokeColorPicker,
-    strokeWidthSlider,
-    shapeWidthSlider,
-    shapeHeightSlider,
-    xSlider,
-    xNumber,
-    ySlider,
-    yNumber,
-    rotationSlider,
-    rotationNumber,
-    startInput,
-    durationInput
-  ]
-  for (const input of inputs) {
-    input.disabled = !enabled
-  }
-  const labels = document.querySelectorAll(".control-group label")
-  for (const label of labels) {
-    if (enabled) {
-      label.classList.remove("disabled")
-    } else {
-      label.classList.add("disabled")
-    }
-  }
-  const values = document.querySelectorAll(".value")
-  for (const val of values) {
-    if (enabled) {
-      val.classList.remove("disabled")
-    } else {
-      val.classList.add("disabled")
-    }
-  }
-  const coordInputs = document.querySelectorAll(".coord-input")
-  for (const ci of coordInputs) {
-    if (enabled) {
-      ci.classList.remove("disabled")
-    } else {
-      ci.classList.add("disabled")
-    }
-  }
-}
-
-function getClipsAtFrame(frame) {
-  return clips.filter(clip => {
-    return frame >= clip.startFrame && frame < clip.startFrame + clip.duration
-  })
-}
-
-// -------- レイヤー数変更 --------
-function setLayerCount(newCount) {
-  newCount = Math.max(1, Math.min(MAX_LAYERS, newCount))
-  if (newCount === currentLayerCount) return
-
-  if (newCount < currentLayerCount) {
-    for (const clip of clips) {
-      if (clip.layerId > newCount) {
-        clip.layerId = newCount
-      }
-    }
-  }
-
-  currentLayerCount = newCount
-  CONFIG.layerCount = newCount
-  layerCountInput.value = String(newCount)
-  drawTimeline()
-  drawPreview()
-}
-
-// -------- 図形描画 --------
-function drawShape(ctx, clip) {
-  const {
-    shapeType,
-    fillColor,
-    strokeColor,
-    strokeWidth,
-    width,
-    height,
-    rotation
-  } = clip
-  if (!shapeType || !width || !height) return
-
-  const w = width
-  const h = height
-
-  ctx.save()
-  // 原点をクリップの中心に移動,回転
-  ctx.rotate((rotation * Math.PI) / 180)
-
-  ctx.beginPath()
-  switch (shapeType) {
-    case "rectangle":
-      ctx.rect(-w / 2, -h / 2, w, h)
-      break
-    case "triangle":
-      ctx.moveTo(0, -h / 2)
-      ctx.lineTo(-w / 2, h / 2)
-      ctx.lineTo(w / 2, h / 2)
-      ctx.closePath()
-      break
-    case "circle":
-      ctx.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2)
-      break
-    case "pie": {
-      const radius = Math.min(w, h) / 2
-      const startAngle = 0
-      const endAngle = Math.PI * 1.5
-      ctx.moveTo(0, 0)
-      ctx.arc(0, 0, radius, startAngle, endAngle)
-      ctx.closePath()
-      break
-    }
-    case "arrow": {
-      const headSize = Math.min(w, h) * 0.35
-      const shaftWidth = h * 0.2
-      ctx.moveTo(w / 2, 0)
-      ctx.lineTo(w / 2 - headSize, -headSize / 2)
-      ctx.lineTo(w / 2 - headSize, -shaftWidth / 2)
-      ctx.lineTo(-w / 2, -shaftWidth / 2)
-      ctx.lineTo(-w / 2, shaftWidth / 2)
-      ctx.lineTo(w / 2 - headSize, shaftWidth / 2)
-      ctx.lineTo(w / 2 - headSize, headSize / 2)
-      ctx.closePath()
-      break
-    }
-    default:
-      ctx.restore()
-      return
-  }
-
-  ctx.clip()
-
-  if (fillColor && fillColor !== "transparent") {
-    ctx.fillStyle = fillColor
-    ctx.fill()
-  }
-
-  if (
-    strokeColor &&
-    strokeColor !== "transparent" &&
-    strokeWidth &&
-    strokeWidth > 0
-  ) {
-    ctx.strokeStyle = strokeColor
-    ctx.lineWidth = strokeWidth
-    ctx.beginPath()
-    switch (shapeType) {
-      case "rectangle":
-        ctx.rect(-w / 2, -h / 2, w, h)
-        break
-      case "triangle":
-        ctx.moveTo(0, -h / 2)
-        ctx.lineTo(-w / 2, h / 2)
-        ctx.lineTo(w / 2, h / 2)
-        ctx.closePath()
-        break
-      case "circle":
-        ctx.arc(0, 0, Math.min(w, h) / 2, 0, Math.PI * 2)
-        break
-      case "pie": {
-        const radius = Math.min(w, h) / 2
-        const startAngle = 0
-        const endAngle = Math.PI * 1.5
-        ctx.moveTo(0, 0)
-        ctx.arc(0, 0, radius, startAngle, endAngle)
-        ctx.closePath()
-        break
-      }
-      case "arrow": {
-        const headSize = Math.min(w, h) * 0.35
-        const shaftWidth = h * 0.2
-        ctx.moveTo(w / 2, 0)
-        ctx.lineTo(w / 2 - headSize, -headSize / 2)
-        ctx.lineTo(w / 2 - headSize, -shaftWidth / 2)
-        ctx.lineTo(-w / 2, -shaftWidth / 2)
-        ctx.lineTo(-w / 2, shaftWidth / 2)
-        ctx.lineTo(w / 2 - headSize, shaftWidth / 2)
-        ctx.lineTo(w / 2 - headSize, headSize / 2)
-        ctx.closePath()
-        break
-      }
-      default:
-        ctx.restore()
-        return
-    }
-    ctx.stroke()
-  }
-
-  ctx.restore()
-}
-
-// -------- テーマ適用 --------
-function applyTheme(themeName) {
-  const theme = THEMES[themeName]
-  if (!theme) return
-  const root = document.documentElement
-  root.style.setProperty("--bg-primary", theme.bg)
-  root.style.setProperty("--bg-secondary", theme.secondary)
-  root.style.setProperty("--bg-card", theme.card)
-  root.style.setProperty("--text-primary", theme.text)
-  root.style.setProperty("--text-secondary", theme.textSecondary)
-  root.style.setProperty("--border-color", theme.border)
-  root.style.setProperty("--accent", theme.accent)
-  CONFIG.theme = themeName
-  themeSelect.value = themeName
-}
-
-// -------- プレビュー描画 --------
-function drawPreview() {
-  ctx.fillStyle = CONFIG.bgColor
-  const { width, height } = CONFIG.resolution
-  const cx = width / 2
-  const cy = height / 2
-  ctx.fillRect(0, 0, width, height)
-  // グリッド線は width, height を使う
-  // 原点は cx, cy を使う
-
-  ctx.strokeStyle = "rgba(255,255,255,0.03)"
-  ctx.lineWidth = 1
-  for (let i = 0; i <= CONFIG.resolution.width; i += 40) {
-    ctx.beginPath()
-    ctx.moveTo(i, 0)
-    ctx.lineTo(i, CONFIG.resolution.height)
-    ctx.stroke()
-  }
-  for (let i = 0; i <= CONFIG.resolution.height; i += 40) {
-    ctx.beginPath()
-    ctx.moveTo(0, i)
-    ctx.lineTo(CONFIG.resolution.width, i)
-    ctx.stroke()
-  }
-
-  ctx.strokeStyle = "rgba(255,255,255,0.08)"
-  ctx.lineWidth = 1
-  ctx.setLineDash([6, 8])
-  ctx.beginPath()
-  ctx.moveTo(CONFIG.resolution.width / 2, 0)
-  ctx.lineTo(CONFIG.resolution.width / 2, CONFIG.resolution.height)
-  ctx.stroke()
-  ctx.beginPath()
-  ctx.moveTo(0, CONFIG.resolution.height / 2)
-  ctx.lineTo(CONFIG.resolution.width, CONFIG.resolution.height / 2)
-  ctx.stroke()
-  ctx.setLineDash([])
-
-  ctx.fillStyle = "rgba(255,50,50,0.5)"
-  ctx.beginPath()
-  ctx.arc(
-    CONFIG.resolution.width / 2,
-    CONFIG.resolution.height / 2,
-    4,
-    0,
-    Math.PI * 2
-  )
-  ctx.fill()
-
-  const visibleClips = getClipsAtFrame(currentFrame)
-  visibleClips.sort((a, b) => a.layerId - b.layerId)
-
-  for (const clip of visibleClips) {
-    const drawX = CONFIG.resolution.width / 2 + clip.x
-    const drawY = CONFIG.resolution.height / 2 + clip.y
-
-    if (clip.type === "text") {
-      const lines = clip.text?.split("\n") || [""]
-      const lineHeight = (clip.fontSize || 48) * 1.2
-      const totalHeight = lines.length * lineHeight
-      const startY = drawY - totalHeight / 2 + lineHeight / 2
-
-      ctx.save()
-      ctx.translate(drawX, drawY)
-      ctx.rotate((clip.rotation * Math.PI) / 180)
-      ctx.font = `${clip.fontSize || 48}px ${clip.fontFamily || DEFAULT_FONT}`
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      for (let i = 0; i < lines.length; i++) {
-        const yOffset = (i - (lines.length - 1) / 2) * lineHeight
-        ctx.fillStyle = clip.color || "#ffffff"
-        ctx.fillText(lines[i], 0, yOffset)
-      }
-      ctx.restore()
-
-      if (clip.id === selectedId) {
-        ctx.save()
-        ctx.translate(drawX, drawY)
-        ctx.rotate((clip.rotation * Math.PI) / 180)
-        let maxWidth = 0
-        for (const line of lines) {
-          const metrics = ctx.measureText(line)
-          if (metrics.width > maxWidth) maxWidth = metrics.width
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AJ Video Editor</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Hachi+Maru+Pop&family=Hina+Mincho&family=Noto+Sans+JP:wght@100..900&family=Noto+Serif+JP:wght@200..900&family=Yuji+Boku&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        const width = maxWidth || 50
-        const height = totalHeight
-        ctx.strokeStyle = "rgba(255,255,255,0.3)"
-        ctx.lineWidth = 2
-        ctx.setLineDash([4, 6])
-        ctx.strokeRect(
-          -width / 2 - 10,
-          -height / 2 - 10,
-          width + 20,
-          height + 20
-        )
-        ctx.setLineDash([])
-        ctx.restore()
-      }
-    } else {
-      ctx.save()
-      ctx.translate(drawX, drawY)
-      drawShape(ctx, clip)
-      ctx.restore()
 
-      if (clip.id === selectedId) {
-        const w = clip.width || 100
-        const h = clip.height || 100
-        ctx.save()
-        ctx.translate(drawX, drawY)
-        ctx.rotate((clip.rotation * Math.PI) / 180)
-        ctx.strokeStyle = "rgba(255,255,255,0.3)"
-        ctx.lineWidth = 2
-        ctx.setLineDash([4, 6])
-        ctx.strokeRect(-w / 2 - 10, -h / 2 - 10, w + 20, h + 20)
-        ctx.setLineDash([])
-        ctx.restore()
-      }
-    }
-  }
-}
-
-// 共通の座標変換関数
-function getCanvasCoords(e) {
-  const rect = canvas.getBoundingClientRect()
-
-  const canvasAspect = canvas.width / canvas.height
-  const rectAspect = rect.width / rect.height
-
-  let drawWidth, drawHeight
-  let offsetX = 0,
-    offsetY = 0
-
-  if (canvasAspect > rectAspect) {
-    drawWidth = rect.width
-    drawHeight = rect.width / canvasAspect
-    offsetX = 0
-    offsetY = (rect.height - drawHeight) / 2
-  } else {
-    drawHeight = rect.height
-    drawWidth = rect.height * canvasAspect
-    offsetX = (rect.width - drawWidth) / 2
-    offsetY = 0
-  }
-
-  const scale = canvas.width / drawWidth
-
-  return {
-    x: (e.clientX - rect.left - offsetX) * scale,
-    y: (e.clientY - rect.top - offsetY) * scale
-  }
-}
-
-// -------- プレビュードラッグ --------
-function getClipAtPosition(cx, cy) {
-  const visibleClips = getClipsAtFrame(currentFrame)
-  for (let i = visibleClips.length - 1; i >= 0; i--) {
-    const clip = visibleClips[i]
-    const drawX = CONFIG.resolution.width / 2 + clip.x
-    const drawY = CONFIG.resolution.height / 2 + clip.y
-
-    let width = 100
-    let height = 60
-    if (clip.type === "text") {
-      const lines = clip.text?.split("\n") || [""]
-      const fontSize = clip.fontSize || 48
-      const lineHeight = fontSize * 1.2
-      height = lines.length * lineHeight
-      let maxWidth = 0
-      ctx.font = `${fontSize}px ${clip.fontFamily || DEFAULT_FONT}`
-      for (const line of lines) {
-        const metrics = ctx.measureText(line)
-        if (metrics.width > maxWidth) maxWidth = metrics.width
-      }
-      width = maxWidth || 100
-      width += 20
-      height += 20
-    } else if (clip.type === "shape") {
-      width = clip.width || 100
-      height = clip.height || 100
-    }
-
-    const halfW = width / 2
-    const halfH = height / 2
-    if (
-      cx >= drawX - halfW &&
-      cx <= drawX + halfW &&
-      cy >= drawY - halfH &&
-      cy <= drawY + halfH
-    ) {
-      return clip
-    }
-  }
-  return null
-}
-
-function setupPreviewDrag() {
-  let isPointerDown = false
-  let pointerDownClip = null
-  let pointerStartX = 0
-  let pointerStartY = 0
-  let clipStartX = 0
-  let clipStartY = 0
-
-  const onPointerDown = e => {
-    const pos = getCanvasCoords(e)
-    const canvasX = pos.x
-    const canvasY = pos.y
-
-    const clip = getClipAtPosition(canvasX, canvasY)
-    if (!clip) return
-
-    selectedId = clip.id
-    syncUI()
-
-    isPointerDown = true
-    pointerDownClip = clip
-    pointerStartX = canvasX
-    pointerStartY = canvasY
-    clipStartX = clip.x
-    clipStartY = clip.y
-
-    canvas.style.cursor = "grabbing"
-    document.addEventListener("mousemove", onPointerMove)
-    document.addEventListener("mouseup", onPointerUp)
-  }
-
-  const onPointerMove = e => {
-    if (!isPointerDown || !pointerDownClip) return
-
-    const pos = getCanvasCoords(e)
-    const canvasX = pos.x
-    const canvasY = pos.y
-
-    if (
-      !isDraggingPreview &&
-      Math.abs(canvasX - pointerStartX) < 3 &&
-        Math.abs(canvasY - pointerStartY) < 3
-    )
-      return
-
-    isDraggingPreview = true
-
-    const deltaX = canvasX - pointerStartX
-    const deltaY = canvasY - pointerStartY
-
-    const newX = Math.round(clipStartX + deltaX)
-    const newY = Math.round(clipStartY + deltaY)
-
-    pointerDownClip.x = newX
-    pointerDownClip.y = newY
-
-    if (selectedId === pointerDownClip.id) {
-      xNumber.value = String(newX)
-      xSlider.value = String(newX)
-      yNumber.value = String(newY)
-      ySlider.value = String(newY)
-    }
-
-    drawPreview()
-  }
-
-  const onPointerUp = e => {
-    if (isDraggingPreview && pointerDownClip) {
-      if (selectedId === pointerDownClip.id) {
-        syncUI()
-      }
-    }
-    isPointerDown = false
-    isDraggingPreview = false
-    pointerDownClip = null
-    canvas.style.cursor = "default"
-    document.removeEventListener("mousemove", onPointerMove)
-    document.removeEventListener("mouseup", onPointerUp)
-  }
-
-  canvas.addEventListener("mousedown", onPointerDown)
-}
-
-// -------- タイムライン描画 --------
-function drawTimeline() {
-  const containerWidth = timelineContainer.clientWidth - 4
-  const visibleDuration = getVisibleDuration()
-  const pixelsPerSecond = getPixelsPerSecond(containerWidth)
-  const totalWidth = getTotalTimelineWidth(containerWidth)
-
-  const totalTrackHeight = currentLayerCount * TIMELINE_HEIGHT
-  const totalHeight = TIMELINE_HEADER_HEIGHT + totalTrackHeight
-
-  let html = ""
-
-  html += `<div class="timeline-ruler" style="height:${TIMELINE_HEADER_HEIGHT}px; padding-left:${TIMELINE_PADDING_LEFT}px; padding-right:${TIMELINE_PADDING_RIGHT}px;">`
-  html += `<div class="timeline-ruler-inner" style="position:relative; height:100%; width:100%;">`
-  for (let s = 0; s <= TIMELINE_DURATION; s++) {
-    const x = s * pixelsPerSecond
-    const isMajor = s % 5 === 0
-    html += `<div class="timeline-tick ${
-      isMajor ? "major" : "minor"
-    }" style="left:${x}px;">`
-    if (isMajor) {
-      html += `<span class="timeline-tick-label">${s}s</span>`
-    }
-    html += `</div>`
-  }
-  const headX = (currentFrame / CONFIG.fps) * pixelsPerSecond
-  html += `<div class="timeline-playhead" style="left:${headX}px;"></div>`
-  html += `</div></div>`
-
-  for (let layerId = 1; layerId <= currentLayerCount; layerId++) {
-    const layerLabel = String(layerId).padStart(2, "0")
-    html += `<div class="timeline-track" style="height:${TIMELINE_HEIGHT}px; width:${totalWidth}px; min-width:100%;">`
-    html += `<div class="timeline-track-label">LAYER ${layerLabel}</div>`
-    html += `<div class="timeline-track-area" style="position:relative; flex:1; height:100%;">`
-
-    const layerClips = clips.filter(c => c.layerId === layerId)
-    for (const clip of layerClips) {
-      const left = (clip.startFrame / CONFIG.fps) * pixelsPerSecond
-      const width = (clip.duration / CONFIG.fps) * pixelsPerSecond
-      const isSelected = clip.id === selectedId
-
-      const color = getClipColor(clip.type)
-
-      const isDragging = isDraggingClip && dragClipId === clip.id
-      const opacity = isDragging ? "0.5" : "0.8"
-
-      const label =
-        clip.type === "text"
-          ? (clip.text || "Text").replace(/\n/g, " ")
-          : clip.shapeType || "shape"
-
-      html += `<div class="timeline-clip ${isSelected ? "selected" : ""} ${
-        isDragging ? "dragging" : ""
-      }" 
-                          data-clip-id="${clip.id}"
-                          style="left:${left}px; width:${Math.max(
-        width,
-        4
-      )}px; background:${color}; opacity:${opacity};">
-                        <span class="timeline-clip-label">${label}</span>
-                     </div>`
-    }
-
-    html += `</div></div>`
-  }
-
-  html += `<div class="timeline-add-layer">`
-  html += `<button class="btn-primary btn-sm" id="addLayerBtn" style="width:100%; max-width:200px;">+ Add Layer</button>`
-  html += `<div id="addLayerInputContainer">`
-  html += `<input type="number" id="addLayerCountInput" value="1" min="1" max="99" />`
-  html += `<span class="hint">layers</span>`
-  html += `<button class="btn-primary btn-sm" id="confirmAddLayerBtn">Add</button>`
-  html += `<button class="btn-primary btn-sm btn-danger" id="cancelAddLayerBtn">Cancel</button>`
-  html += `</div></div>`
-
-  const containerHeight =
-    timelineContainer.clientHeight || Math.min(totalHeight + 8 + 32, 500)
-  timelineContainer.style.height = `${Math.max(80, containerHeight)}px`
-  timelineContainer.innerHTML = html
-
-  document.querySelectorAll(".timeline-clip").forEach(el => {
-    el.addEventListener("click", e => {
-      if (isDraggingClip) return
-      const id = el.getAttribute("data-clip-id")
-      if (id) {
-        selectedId = id
-        syncUI()
-      }
-    })
-  })
-
-  document.querySelectorAll(".timeline-clip").forEach(el => {
-    el.addEventListener("mousedown", e => {
-      const id = el.getAttribute("data-clip-id")
-      if (id) {
-        startClipDrag(e, id)
-      }
-    })
-  })
-
-  const trackAreas = timelineContainer.querySelectorAll(".timeline-track-area")
-  for (const area of trackAreas) {
-    area.addEventListener("mousedown", e => {
-      const target = e.target
-      if (target.closest(".timeline-clip")) return
-      startSeek(e)
-    })
-  }
-  const ruler = timelineContainer.querySelector(".timeline-ruler-inner")
-  if (ruler) {
-    ruler.addEventListener("mousedown", e => {
-      startSeek(e)
-    })
-  }
-
-  const addLayerBtn = document.getElementById("addLayerBtn")
-  const addLayerInputContainer = document.getElementById(
-    "addLayerInputContainer"
-  )
-  const addLayerCountInput = document.getElementById("addLayerCountInput")
-  const confirmAddLayerBtn = document.getElementById("confirmAddLayerBtn")
-  const cancelAddLayerBtn = document.getElementById("cancelAddLayerBtn")
-
-  if (addLayerBtn) {
-    addLayerBtn.addEventListener("click", () => {
-      addLayerBtn.style.display = "none"
-      if (addLayerInputContainer) {
-        addLayerInputContainer.style.display = "flex"
-        addLayerCountInput?.focus()
-        addLayerCountInput?.select()
-      }
-    })
-  }
-
-  if (confirmAddLayerBtn) {
-    confirmAddLayerBtn.addEventListener("click", () => {
-      const val = parseInt(addLayerCountInput?.value || "1", 10)
-      if (!isNaN(val) && val > 0) {
-        const newCount = Math.min(currentLayerCount + val, MAX_LAYERS)
-        setLayerCount(newCount)
-      }
-      if (addLayerInputContainer) {
-        addLayerInputContainer.style.display = "none"
-      }
-      if (addLayerBtn) {
-        addLayerBtn.style.display = ""
-      }
-    })
-  }
-
-  if (cancelAddLayerBtn) {
-    cancelAddLayerBtn.addEventListener("click", () => {
-      if (addLayerInputContainer) {
-        addLayerInputContainer.style.display = "none"
-      }
-      if (addLayerBtn) {
-        addLayerBtn.style.display = ""
-      }
-    })
-  }
-
-  if (addLayerCountInput) {
-    addLayerCountInput.addEventListener("keydown", e => {
-      if (e.key === "Enter") {
-        e.preventDefault()
-        confirmAddLayerBtn?.click()
-      }
-      if (e.key === "Escape") {
-        cancelAddLayerBtn?.click()
-      }
-    })
-  }
-
-  currentTimeDisplay.textContent = formatTime(currentFrame)
-  totalTimeDisplay.textContent = formatTime(TIMELINE_DURATION * CONFIG.fps)
-
-  // -------- ズームコントロールを追加 --------
-  const timelineControls = document.querySelector(".timeline-controls")
-  if (timelineControls && !document.getElementById("zoomControls")) {
-    const zoomControls = document.createElement("div")
-    zoomControls.id = "zoomControls"
-    zoomControls.style.cssText =
-      "display:flex; align-items:center; gap:6px; margin-left:12px;"
-
-    zoomOutBtn = document.createElement("button")
-    zoomOutBtn.id = "zoomOutBtn"
-    zoomOutBtn.className = "btn-primary btn-sm"
-    zoomOutBtn.textContent = "−"
-    zoomOutBtn.style.cssText = "padding:2px 10px; font-size:16px;"
-
-    zoomLevelDisplay = document.createElement("span")
-    zoomLevelDisplay.id = "zoomLevel"
-    zoomLevelDisplay.style.cssText =
-      "font-size:12px; color:var(--text-secondary); min-width:44px; text-align:center;"
-    updateZoomDisplay()
-
-    zoomInBtn = document.createElement("button")
-    zoomInBtn.id = "zoomInBtn"
-    zoomInBtn.className = "btn-primary btn-sm"
-    zoomInBtn.textContent = "＋"
-    zoomInBtn.style.cssText = "padding:2px 10px; font-size:16px;"
-
-    zoomControls.appendChild(zoomOutBtn)
-    zoomControls.appendChild(zoomLevelDisplay)
-    zoomControls.appendChild(zoomInBtn)
-    timelineControls.appendChild(zoomControls)
-  }
-}
-
-// -------- タイムライン操作 --------
-function startClipDrag(e, clipId) {
-  if (isDraggingClip) return
-  const clip = clips.find(c => c.id === clipId)
-  if (!clip) return
-  if (isPlaying) stopPlayback()
-  isDraggingClip = true
-  dragClipId = clipId
-  dragStartFrame = clip.startFrame
-  dragStartLayer = clip.layerId
-  dragStartMouseX = e.clientX
-  dragStartMouseY = e.clientY
-  dragClipElement = e.target
-  selectedId = clipId
-  document.addEventListener("mousemove", onClipDragMove)
-  document.addEventListener("mouseup", onClipDragEnd)
-  document.addEventListener("mouseleave", onClipDragEnd)
-  document.body.style.cursor = "grabbing"
-  drawTimeline()
-}
-
-function onClipDragMove(e) {
-  if (!isDraggingClip || !dragClipId) return
-  const clip = clips.find(c => c.id === dragClipId)
-  if (!clip) return
-  const container = timelineContainer
-  const rect = container.getBoundingClientRect()
-  const containerWidth = container.clientWidth - 4
-  const pixelsPerSecond = getPixelsPerSecond(containerWidth)
-
-  // 横方向のドラッグでフレームを変更
-  const deltaX = (e.clientX - dragStartMouseX) / pixelsPerSecond
-  let newStartFrame = Math.round(dragStartFrame + deltaX * CONFIG.fps)
-  const maxStart = TIMELINE_DURATION * CONFIG.fps - clip.duration
-  newStartFrame = Math.max(0, Math.min(maxStart, newStartFrame))
-
-  // 縦方向のドラッグでレイヤーを変更
-  const trackY = e.clientY - rect.top - TIMELINE_HEADER_HEIGHT
-  const layerIndex = Math.floor(trackY / TIMELINE_HEIGHT)
-  let newLayerId = layerIndex + 1
-  newLayerId = Math.max(1, Math.min(currentLayerCount, newLayerId))
-
-  // ★ 横移動を先に試す（同じレイヤーのまま）
-  const oldStartFrame = clip.startFrame
-  const oldLayerId = clip.layerId
-  clip.startFrame = newStartFrame
-
-  // 横移動だけで重なる場合 → 調整
-  if (CONFIG.preventOverlap && isOverlapping(clip, clip.id)) {
-    const direction = newStartFrame > oldStartFrame ? 1 : -1
-    let testFrame = oldStartFrame + direction
-    let found = false
-    let attempts = 0
-    while (attempts < 100 && !found) {
-      attempts++
-      clip.startFrame = testFrame
-      if (!isOverlapping(clip, clip.id)) {
-        found = true
-        break
-      }
-      testFrame += direction
-      if (
-        testFrame < 0 ||
-        testFrame > TIMELINE_DURATION * CONFIG.fps - clip.duration
-      ) {
-        break
-      }
-    }
-    if (!found) {
-      clip.startFrame = oldStartFrame
-    }
-  }
-
-  // ★ レイヤー変更を試す（横移動は維持したまま）
-  if (newLayerId !== oldLayerId) {
-    const currentStartFrame = clip.startFrame
-    clip.layerId = newLayerId
-
-    if (CONFIG.preventOverlap && isOverlapping(clip, clip.id)) {
-      // レイヤー変更で重なる場合 → 空いてるレイヤーを探す
-      const availableLayer = findAvailableLayer(
-        currentStartFrame,
-        clip.duration
-      )
-      if (availableLayer !== null) {
-        clip.layerId = availableLayer
-      } else {
-        // 空いてるレイヤーがない → 元のレイヤーに戻す
-        clip.layerId = oldLayerId
-      }
-    }
-  }
-
-  drawTimeline()
-  drawPreview()
-  if (selectedId === dragClipId) updatePropertyUI(clip)
-}
-
-function onClipDragEnd(e) {
-  if (!isDraggingClip) return
-  isDraggingClip = false
-  dragClipId = null
-  dragClipElement = null
-  document.removeEventListener("mousemove", onClipDragMove)
-  document.removeEventListener("mouseup", onClipDragEnd)
-  document.removeEventListener("mouseleave", onClipDragEnd)
-  document.body.style.cursor = ""
-  drawTimeline()
-  drawPreview()
-  syncUI()
-}
-
-function updatePropertyUI(clip) {
-  if (selectedId !== clip.id) return
-  startInput.value = String(clip.startFrame)
-  durationInput.value = String(clip.duration)
-}
-
-// -------- シーク --------
-function getFrameFromMouseEvent(e) {
-  const container = timelineContainer
-  const rect = container.getBoundingClientRect()
-  const containerWidth = container.clientWidth - 4
-  const pixelsPerSecond = getPixelsPerSecond(containerWidth)
-
-  const x = e.clientX - rect.left - TIMELINE_PADDING_LEFT + container.scrollLeft
-  const seconds = Math.max(0, Math.min(TIMELINE_DURATION, x / pixelsPerSecond))
-  return Math.round(seconds * CONFIG.fps)
-}
-
-function startSeek(e) {
-  const target = e.target
-  if (target.closest(".timeline-clip")) return
-  if (isPlaying) stopPlayback()
-  isSeeking = true
-  currentFrame = getFrameFromMouseEvent(e)
-  drawTimeline()
-  drawPreview()
-  document.addEventListener("mousemove", onSeekMove)
-  document.addEventListener("mouseup", onSeekEnd)
-  document.addEventListener("mouseleave", onSeekEnd)
-}
-
-function onSeekMove(e) {
-  if (!isSeeking) return
-  currentFrame = getFrameFromMouseEvent(e)
-  drawTimeline()
-  drawPreview()
-}
-
-function onSeekEnd(e) {
-  if (!isSeeking) return
-  isSeeking = false
-  document.removeEventListener("mousemove", onSeekMove)
-  document.removeEventListener("mouseup", onSeekEnd)
-  document.removeEventListener("mouseleave", onSeekEnd)
-}
-
-// -------- 再生制御 --------
-function togglePlay() {
-  if (isPlaying) stopPlayback()
-  else startPlayback()
-}
-
-function startPlayback() {
-  if (isPlaying) return
-  if (currentFrame >= TIMELINE_DURATION * CONFIG.fps) currentFrame = 0
-  isPlaying = true
-  playBtn.textContent = "⏸"
-  playBtn.classList.add("playing")
-  playInterval = window.setInterval(() => {
-    currentFrame++
-    if (currentFrame >= TIMELINE_DURATION * CONFIG.fps) {
-      currentFrame = TIMELINE_DURATION * CONFIG.fps
-      stopPlayback()
-      drawTimeline()
-      drawPreview()
-      return
-    }
-    drawTimeline()
-    drawPreview()
-  }, 1000 / CONFIG.fps)
-}
-
-function stopPlayback() {
-  isPlaying = false
-  playBtn.textContent = "▶"
-  playBtn.classList.remove("playing")
-  if (playInterval !== null) {
-    clearInterval(playInterval)
-    playInterval = null
-  }
-}
-
-// -------- 重なり関連 --------
-function isOverlapping(clip, ignoreId) {
-  return clips.some(other => {
-    if (other.id === clip.id) return false
-    if (ignoreId && other.id === ignoreId) return false
-    if (other.layerId !== clip.layerId) return false
-    const aStart = clip.startFrame
-    const aEnd = clip.startFrame + clip.duration
-    const bStart = other.startFrame
-    const bEnd = other.startFrame + other.duration
-    return aStart < bEnd && bStart < aEnd
-  })
-}
-
-function resolveOverlap(clip, ignoreId) {
-  if (!CONFIG.preventOverlap) return
-  let attempts = 0
-  while (isOverlapping(clip, ignoreId) && attempts < 100) {
-    attempts++
-    clip.startFrame++
-    if (clip.startFrame + clip.duration > TIMELINE_DURATION * CONFIG.fps) {
-      clip.startFrame = TIMELINE_DURATION * CONFIG.fps - clip.duration
-      if (clip.startFrame < 0) {
-        clip.startFrame = 0
-        clip.duration = TIMELINE_DURATION * CONFIG.fps
-      }
-      break
-    }
-  }
-}
-
-function applyOverlapPrevention(clip, ignoreId) {
-  if (!CONFIG.preventOverlap) return
-  resolveOverlap(clip, ignoreId)
-}
-
-function findAvailableLayer(startFrame, duration) {
-  for (let layerId = 1; layerId <= currentLayerCount; layerId++) {
-    const hasOverlap = clips.some(clip => {
-      if (clip.layerId !== layerId) return false
-      const aStart = startFrame
-      const aEnd = startFrame + duration
-      const bStart = clip.startFrame
-      const bEnd = clip.startFrame + clip.duration
-      return aStart < bEnd && bStart < aEnd
-    })
-    if (!hasOverlap) return layerId
-  }
-  return null
-}
-
-//  -------- 時間表示 --------
-function formatTime(frame) {
-  const seconds = frame / CONFIG.fps
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  const tenths = Math.floor((seconds % 1) * 10)
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(
-    2,
-    "0"
-  )}.${tenths}`
-}
-
-// ★ ヘルパー関数
-function getVisibleDuration() {
-  return TIMELINE_DURATION / timelineZoom
-}
-
-function getPixelsPerSecond(containerWidth) {
-  const usableWidth =
-    containerWidth - TIMELINE_PADDING_LEFT - TIMELINE_PADDING_RIGHT
-  const visibleDuration = getVisibleDuration()
-  return usableWidth / visibleDuration
-}
-
-function getTotalTimelineWidth(containerWidth) {
-  const usableWidth =
-    containerWidth - TIMELINE_PADDING_LEFT - TIMELINE_PADDING_RIGHT
-  const visibleDuration = getVisibleDuration()
-  return (
-    (TIMELINE_DURATION / visibleDuration) * usableWidth +
-    TIMELINE_PADDING_LEFT +
-    TIMELINE_PADDING_RIGHT
-  )
-}
-
-function getTickInterval() {
-  const visibleDuration = getVisibleDuration()
-  if (visibleDuration <= 2) return 0.5
-  if (visibleDuration <= 5) return 1.0
-  if (visibleDuration <= 10) return 2.0
-  if (visibleDuration <= 20) return 5.0
-  return 10.0
-}
-
-function updateZoomDisplay() {
-  const percent = Math.round(timelineZoom * 100)
-  if (zoomLevelDisplay) {
-    zoomLevelDisplay.textContent = `${percent}%`
-  }
-}
-
-// ★ ズーム制御関数
-function zoomTimeline(factor) {
-  const oldZoom = timelineZoom
-  const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, timelineZoom * factor))
-
-  if (newZoom === timelineZoom) return
-
-  const container = timelineContainer
-  const containerWidth = container.clientWidth - 4
-
-  // 再生ヘッドの現在位置（ピクセル）を計算
-  const oldPixelsPerSecond = getPixelsPerSecond(containerWidth)
-  const headPixel =
-    (currentFrame / CONFIG.fps) * oldPixelsPerSecond + TIMELINE_PADDING_LEFT
-
-  // ズームを適用
-  timelineZoom = newZoom
-
-  // 再生ヘッドが同じ位置に見えるようにスクロール調整
-  const newPixelsPerSecond = getPixelsPerSecond(containerWidth)
-  const newHeadPixel =
-    (currentFrame / CONFIG.fps) * newPixelsPerSecond + TIMELINE_PADDING_LEFT
-
-  container.scrollLeft += newHeadPixel - headPixel
-
-  updateZoomDisplay()
-  drawTimeline()
-}
-
-// -------- UI同期 --------
-function syncUI() {
-  const selected = getSelected()
-  const hasClips = clips.length > 0
-
-  if (selected && hasClips) {
-    typeDisplay.textContent = selected.type === "text" ? "テキスト" : "図形"
-
-    if (selected.type === "text") {
-      textProperties.style.display = ""
-      shapeProperties.style.display = "none"
-      textInput.value = selected.text || ""
-      fontSelect.value = selected.fontFamily || DEFAULT_FONT
-      fontSizeSlider.value = String(selected.fontSize || 50)
-      fontSizeLabel.textContent = `${selected.fontSize || 50}px`
-      colorPicker.value = selected.color || "#ffffff"
-    } else {
-      textProperties.style.display = "none"
-      shapeProperties.style.display = ""
-      shapeTypeSelect.value = selected.shapeType || "rectangle"
-      fillColorPicker.value = selected.fillColor || "#ffffff"
-      strokeColorPicker.value = selected.strokeColor || "#ffffff"
-      strokeWidthSlider.value = String(selected.strokeWidth || 0)
-      // ★ 数値入力にも反映
-      strokeWidthNumber.value = String(selected.strokeWidth || 0)
-      shapeWidthSlider.value = String(selected.width || 100)
-      shapeWidthNumber.value = String(selected.width || 100)
-      shapeHeightSlider.value = String(selected.height || 100)
-      shapeHeightNumber.value = String(selected.height || 100)
-    }
-
-    xSlider.value = String(selected.x)
-    xNumber.value = String(selected.x)
-    ySlider.value = String(selected.y)
-    yNumber.value = String(selected.y)
-    rotationSlider.value = String(selected.rotation)
-    rotationNumber.value = String(selected.rotation)
-    startInput.value = String(selected.startFrame)
-    durationInput.value = String(selected.duration)
-
-    updateSliderRange(xSlider, selected.x, SLIDER_STAGES.coord, isDraggingX)
-    updateSliderRange(ySlider, selected.y, SLIDER_STAGES.coord, isDraggingY)
-    updateSliderRange(
-      rotationSlider,
-      selected.rotation,
-      SLIDER_STAGES.rotation,
-      isDraggingRotation
-    )
-    updateSliderRangePositive(
-      strokeWidthSlider,
-      selected.strokeWidth || 0,
-      SLIDER_STAGES.stroke,
-      isDraggingStroke
-    )
-    updateSliderRangePositive(
-      shapeWidthSlider,
-      selected.width || 100,
-      SLIDER_STAGES.size,
-      isDraggingWidth
-    )
-    updateSliderRangePositive(
-      shapeHeightSlider,
-      selected.height || 100,
-      SLIDER_STAGES.size,
-      isDraggingHeight
-    )
-    updateSliderRangePositive(
-      fontSizeSlider,
-      selected.fontSize || 50,
-      SLIDER_STAGES.fontSize,
-      isDraggingFontSize
-    )
-
-    setPropertiesEnabled(true)
-    autoResizeTextarea()
-  } else {
-    typeDisplay.textContent = "-"
-    textProperties.style.display = "none"
-    shapeProperties.style.display = "none"
-    textInput.value = ""
-    fontSizeLabel.textContent = "--"
-    fontSelect.value = DEFAULT_FONT
-    xNumber.value = ""
-    yNumber.value = ""
-    rotationNumber.value = ""
-    startInput.value = ""
-    durationInput.value = ""
-    setPropertiesEnabled(false)
-  }
-
-  drawTimeline()
-  drawPreview()
-}
-
-function autoResizeTextarea() {
-  textInput.style.height = "auto"
-  textInput.style.height = `${Math.min(textInput.scrollHeight, 120)}px`
-}
-
-// -------- クリップ追加 --------
-function addClip(type) {
-  const startFrame = currentFrame
-  const duration = DEFAULT_CLIP_DURATION
-  const layerId = findAvailableLayer(startFrame, duration)
-
-  if (layerId === null) {
-    alert(
-      "これ以上クリップを追加できません。レイヤー数を増やすか、既存のクリップを移動してください。"
-    )
-    return
-  }
-
-  let newClip
-
-  if (type === "text") {
-    newClip = {
-      id: generateId(),
-      type: "text",
-      layerId: layerId,
-      startFrame: startFrame,
-      duration: duration,
-      x: 0,
-      y: 0,
-      rotation: 0,
-      text: "New Text",
-      fontSize: 50,
-      color: "#ffffff",
-      fontFamily: DEFAULT_FONT
-    }
-  } else {
-    newClip = {
-      id: generateId(),
-      type: "shape",
-      layerId: layerId,
-      startFrame: startFrame,
-      duration: duration,
-      x: 0,
-      y: 0,
-      rotation: 0,
-      shapeType: "rectangle",
-      fillColor: "#ffffff",
-      strokeColor: "transparent",
-      strokeWidth: 0,
-      width: 100,
-      height: 100
-    }
-  }
-
-  applyOverlapPrevention(newClip)
-  clips.push(newClip)
-  selectedId = newClip.id
-  syncUI()
-}
-
-// -------- テキスト削除 --------
-function deleteSelected() {
-  if (!selectedId) return
-  clips = clips.filter(c => c.id !== selectedId)
-  selectedId = clips.length > 0 ? clips[0].id : null
-  syncUI()
-}
-
-// -------- 選択中のプロパティ更新 --------
-function updateSelected() {
-  const selected = getSelected()
-  if (!selected) return
-
-  if (selected.type === "text") {
-    selected.text = textInput.value || " "
-    selected.fontFamily = fontSelect.value
-    selected.fontSize = parseFloat(fontSizeSlider.value) || 50
-    selected.color = colorPicker.value
-  } else {
-    selected.shapeType = shapeTypeSelect.value
-    selected.fillColor = fillColorPicker.value
-    selected.strokeColor = strokeColorPicker.value
-    selected.strokeWidth = parseFloat(strokeWidthSlider.value) || 0
-    selected.width = parseFloat(shapeWidthSlider.value) || 100
-    selected.height = parseFloat(shapeHeightSlider.value) || 100
-  }
-
-  selected.x = parseFloat(xSlider.value) || 0
-  selected.y = parseFloat(ySlider.value) || 0
-  selected.rotation = parseFloat(rotationSlider.value) || 0
-
-  xNumber.value = String(selected.x)
-  yNumber.value = String(selected.y)
-  rotationNumber.value = String(selected.rotation)
-
-  fontSizeLabel.textContent = `${selected.fontSize || 50}px`
-
-  autoResizeTextarea()
-  drawPreview()
-  drawTimeline()
-}
-
-// -------- Start / Duration 更新 --------
-function updateStart() {
-  const selected = getSelected()
-  if (!selected) return
-  let val = parseInt(startInput.value, 10)
-  if (isNaN(val) || val < 0) val = 0
-  const maxStart = TIMELINE_DURATION * CONFIG.fps - selected.duration
-  if (val > maxStart) val = maxStart
-  const oldStart = selected.startFrame
-  selected.startFrame = val
-  if (CONFIG.preventOverlap && isOverlapping(selected, selected.id)) {
-    selected.startFrame = oldStart
-    resolveOverlap(selected, selected.id)
-  }
-  startInput.value = String(selected.startFrame)
-  drawTimeline()
-  drawPreview()
-}
-
-function updateDuration() {
-  const selected = getSelected()
-  if (!selected) return
-  let val = parseInt(durationInput.value, 10)
-  if (isNaN(val) || val < 1) val = 1
-  const maxStart = TIMELINE_DURATION * CONFIG.fps - val
-  if (selected.startFrame > maxStart)
-    selected.startFrame = Math.max(0, maxStart)
-  const oldDuration = selected.duration
-  selected.duration = val
-  if (CONFIG.preventOverlap && isOverlapping(selected, selected.id)) {
-    selected.duration = oldDuration
-    resolveOverlap(selected, selected.id)
-  }
-  durationInput.value = String(selected.duration)
-  drawTimeline()
-  drawPreview()
-}
-
-// -------- 数値入力の共通設定（ループ化） --------
-function setupAllNumberInputs() {
-  const configs = [
-    // ===== X座標 =====
-    {
-      input: xNumber,
-      slider: xSlider,
-      config: NUMBER_CONFIGS.x,
-      getIsDragging: () => isDraggingX || isDraggingY,
-      updateFn: val =>
-        updateSliderRange(xSlider, val, SLIDER_STAGES.coord, false),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected) return
-        selected.x = val
-        xSlider.value = String(val)
-        xNumber.value = String(val)
-        if (!isDraggingX && !isDraggingY)
-          updateSliderRange(xSlider, val, SLIDER_STAGES.coord, false)
-        drawPreview()
-      }
-    },
-    // ===== Y座標 =====
-    {
-      input: yNumber,
-      slider: ySlider,
-      config: NUMBER_CONFIGS.y,
-      getIsDragging: () => isDraggingX || isDraggingY,
-      updateFn: val =>
-        updateSliderRange(ySlider, val, SLIDER_STAGES.coord, false),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected) return
-        selected.y = val
-        ySlider.value = String(val)
-        yNumber.value = String(val)
-        if (!isDraggingX && !isDraggingY)
-          updateSliderRange(ySlider, val, SLIDER_STAGES.coord, false)
-        drawPreview()
-      }
-    },
-    // ===== 回転 =====
-    {
-      input: rotationNumber,
-      slider: rotationSlider,
-      config: NUMBER_CONFIGS.rotation,
-      getIsDragging: () => isDraggingRotation,
-      updateFn: val =>
-        updateSliderRange(rotationSlider, val, SLIDER_STAGES.rotation, false),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected) return
-        selected.rotation = val
-        rotationSlider.value = String(val)
-        rotationNumber.value = String(val)
-        if (!isDraggingRotation)
-          updateSliderRange(rotationSlider, val, SLIDER_STAGES.rotation, false)
-        drawPreview()
-      }
-    },
-    // ===== Start =====
-    {
-      input: startInput,
-      slider: startInput,
-      config: NUMBER_CONFIGS.start,
-      getIsDragging: () => false,
-      updateFn: () => {},
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected) return
-        const oldStart = selected.startFrame
-        selected.startFrame = val
-        if (CONFIG.preventOverlap && isOverlapping(selected, selected.id)) {
-          selected.startFrame = oldStart
-          resolveOverlap(selected, selected.id)
+        :root {
+            --bg-primary: #0d0d0d;
+            --bg-secondary: #161616;
+            --bg-card: #111;
+            --text-primary: #e0e0e0;
+            --text-secondary: #888;
+            --border-color: #2a2a2a;
+            --accent: #f5576c;
+            --shadow: rgba(0, 0, 0, 0.6);
         }
-        startInput.value = String(selected.startFrame)
-        drawTimeline()
-        drawPreview()
-      }
-    },
-    // ===== Duration =====
-    {
-      input: durationInput,
-      slider: durationInput,
-      config: NUMBER_CONFIGS.duration,
-      getIsDragging: () => false,
-      updateFn: () => {},
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected) return
-        const maxStart = TIMELINE_DURATION * CONFIG.fps - val
-        if (selected.startFrame > maxStart)
-          selected.startFrame = Math.max(0, maxStart)
-        const oldDuration = selected.duration
-        selected.duration = val
-        if (CONFIG.preventOverlap && isOverlapping(selected, selected.id)) {
-          selected.duration = oldDuration
-          resolveOverlap(selected, selected.id)
+
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+            transition: background 0.3s, color 0.3s;
         }
-        durationInput.value = String(selected.duration)
-        drawTimeline()
-        drawPreview()
-      }
-    },
-    // ===== ★ 追加：Stroke W =====
-    {
-      input: strokeWidthNumber,
-      slider: strokeWidthSlider,
-      config: NUMBER_CONFIGS.stroke,
-      getIsDragging: () => isDraggingStroke,
-      updateFn: val =>
-        updateSliderRangePositive(
-          strokeWidthSlider,
-          val,
-          SLIDER_STAGES.stroke,
-          false
-        ),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected || selected.type !== "shape") return
-        selected.strokeWidth = val
-        strokeWidthSlider.value = String(val)
-        strokeWidthNumber.value = String(val)
-        if (!isDraggingStroke)
-          updateSliderRangePositive(
-            strokeWidthSlider,
-            val,
-            SLIDER_STAGES.stroke,
-            false
-          )
-        drawPreview()
-      }
-    },
-    // ===== ★ 追加：Width =====
-    {
-      input: shapeWidthNumber,
-      slider: shapeWidthSlider,
-      config: NUMBER_CONFIGS.width,
-      getIsDragging: () => isDraggingWidth,
-      updateFn: val =>
-        updateSliderRangePositive(
-          shapeWidthSlider,
-          val,
-          SLIDER_STAGES.size,
-          false
-        ),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected || selected.type !== "shape") return
-        selected.width = val
-        shapeWidthSlider.value = String(val)
-        shapeWidthNumber.value = String(val)
-        if (!isDraggingWidth)
-          updateSliderRangePositive(
-            shapeWidthSlider,
-            val,
-            SLIDER_STAGES.size,
-            false
-          )
-        drawPreview()
-      }
-    },
-    // ===== ★ 追加：Height =====
-    {
-      input: shapeHeightNumber,
-      slider: shapeHeightSlider,
-      config: NUMBER_CONFIGS.height,
-      getIsDragging: () => isDraggingHeight,
-      updateFn: val =>
-        updateSliderRangePositive(
-          shapeHeightSlider,
-          val,
-          SLIDER_STAGES.size,
-          false
-        ),
-      onCommit: val => {
-        const selected = getSelected()
-        if (!selected || selected.type !== "shape") return
-        selected.height = val
-        shapeHeightSlider.value = String(val)
-        shapeHeightNumber.value = String(val)
-        if (!isDraggingHeight)
-          updateSliderRangePositive(
-            shapeHeightSlider,
-            val,
-            SLIDER_STAGES.size,
-            false
-          )
-        drawPreview()
-      }
-    }
-  ]
 
-  for (const cfg of configs) {
-    setupNumberInput(cfg.input, cfg.slider, {
-      min: cfg.config.min,
-      max: cfg.config.max,
-      default: cfg.config.default,
-      stages: cfg.config.stages,
-      getIsDragging: cfg.getIsDragging,
-      updateSliderRangeFn: cfg.updateFn,
-      onCommit: cfg.onCommit
-    })
-  }
-}
+        .app {
+            max-width: 1600px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 40px);
+            max-height: calc(100vh - 40px);
+        }
 
-// -------- パネルリサイズ機能 --------
-function setupResizeHandles() {
-  resizeHandleHorizontal.addEventListener("mousedown", e => {
-    e.preventDefault()
-    isResizingHorizontal = true
-    resizeStartX = e.clientX
-    resizeStartWidth = canvasWrapper.getBoundingClientRect().width
-    resizeHandleHorizontal.classList.add("active")
-    document.addEventListener("mousemove", onHorizontalResize)
-    document.addEventListener("mouseup", onHorizontalResizeEnd)
-    document.body.style.cursor = "col-resize"
-    document.body.style.userSelect = "none"
-  })
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0 20px;
+            border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+        }
 
-  resizeHandleVertical.addEventListener("mousedown", e => {
-    e.preventDefault()
-    isResizingVertical = true
-    resizeStartY = e.clientY
-    resizeStartHeight = bottomSection.getBoundingClientRect().height
-    resizeHandleVertical.classList.add("active")
-    document.addEventListener("mousemove", onVerticalResize)
-    document.addEventListener("mouseup", onVerticalResizeEnd)
-    document.body.style.cursor = "row-resize"
-    document.body.style.userSelect = "none"
-  })
-}
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
 
-function onHorizontalResize(e) {
-  if (!isResizingHorizontal) return
-  const delta = e.clientX - resizeStartX
-  const newWidth = resizeStartWidth + delta
-  const parentWidth =
-    canvasWrapper.parentElement.getBoundingClientRect().width - 6
-  const maxWidth = parentWidth - MIN_PANEL_WIDTH
+        header h1 {
+            font-size: 22px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 1px;
+        }
 
-  if (newWidth >= MIN_PANEL_WIDTH && newWidth <= maxWidth) {
-    canvasWrapper.style.flex = "none"
-    canvasWrapper.style.width = `${newWidth}px`
-  }
-}
+        .settings-toggle {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+        .settings-toggle:hover {
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+        }
 
-function onHorizontalResizeEnd(e) {
-  isResizingHorizontal = false
-  resizeHandleHorizontal.classList.remove("active")
-  document.removeEventListener("mousemove", onHorizontalResize)
-  document.removeEventListener("mouseup", onHorizontalResizeEnd)
-  document.body.style.cursor = ""
-  document.body.style.userSelect = ""
-  drawPreview()
-}
+        header .badge {
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: var(--bg-secondary);
+            padding: 4px 14px;
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+        }
 
-function onVerticalResize(e) {
-  if (!isResizingVertical) return
-  const topSectionHeight = document
-    .querySelector(".top-section")
-    .getBoundingClientRect().height
-  const container = document.querySelector(".main-content")
-  const totalHeight = container.getBoundingClientRect().height - 50
-  const delta = -(e.clientY - resizeStartY)
-  const newHeight = Math.min(
-    Math.max(resizeStartHeight + delta, MIN_TIMELINE_HEIGHT),
-    totalHeight * 0.6
-  )
+        /* ----- 設定オーバーレイ（タブ分割） ----- */
+        .settings-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            animation: fadeIn 0.25s ease;
+        }
+        .settings-overlay.active {
+            display: flex;
+        }
 
-  bottomSection.style.height = `${newHeight}px`
-  bottomSection.style.minHeight = `${MIN_TIMELINE_HEIGHT}px`
-  drawTimeline()
-}
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
 
-function onVerticalResizeEnd(e) {
-  isResizingVertical = false
-  resizeHandleVertical.classList.remove("active")
-  document.removeEventListener("mousemove", onVerticalResize)
-  document.removeEventListener("mouseup", onVerticalResizeEnd)
-  document.body.style.cursor = ""
-  document.body.style.userSelect = ""
-}
+        .settings-window {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            width: 800px;
+            max-width: 92vw;
+            max-height: 85vh;
+            padding: 28px 32px;
+            box-shadow: 0 20px 60px var(--shadow);
+            display: flex;
+            flex-direction: column;
+            animation: slideUp 0.3s ease;
+        }
 
-// -------- キーボードショートカット --------
-function setupKeyboardShortcuts() {
-  document.addEventListener("keydown", e => {
-    const target = e.target
-    if (
-      target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT"
-    )
-      return
-    if (e.key === " ") {
-      e.preventDefault()
-      togglePlay()
-      return
-    }
-    if (e.key === "Backspace" || e.key === "Delete") {
-      e.preventDefault()
-      deleteSelected()
-      return
-    }
-    if (e.key === "Escape" && settingsOverlay.classList.contains("active"))
-      closeSettings()
-  })
-}
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
 
-// -------- 設定UI --------
-function openSettings() {
-  settingsOverlay.classList.add("active")
-}
-function closeSettings() {
-  settingsOverlay.classList.remove("active")
-}
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-shrink: 0;
+        }
+        .settings-header h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .settings-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 28px;
+            cursor: pointer;
+            padding: 0 8px;
+            line-height: 1;
+            transition: color 0.2s;
+        }
+        .settings-close:hover {
+            color: var(--text-primary);
+        }
 
-settingsToggle.addEventListener("click", openSettings)
-settingsClose.addEventListener("click", closeSettings)
-settingsCloseBtn.addEventListener("click", closeSettings)
-settingsOverlay.addEventListener("click", e => {
-  if (e.target === settingsOverlay) closeSettings()
-})
+        /* ★ タブメニュー ★ */
+        .settings-tabs {
+            display: flex;
+            gap: 4px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+            flex-shrink: 0;
+        }
+        .settings-tabs button {
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+        }
+        .settings-tabs button:hover {
+            color: var(--text-primary);
+        }
+        .settings-tabs button.active {
+            color: var(--text-primary);
+            border-bottom-color: var(--accent);
+        }
 
-// -------- 設定UIのイベント登録 --------
-themeSelect.addEventListener("change", () => applyTheme(themeSelect.value))
-overlapToggle.addEventListener("change", () => {
-  CONFIG.preventOverlap = overlapToggle.checked
-})
+        .settings-body {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        .settings-body::-webkit-scrollbar {
+            width: 4px;
+        }
+        .settings-body::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+        .settings-body::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
 
-applyLayerCountBtn.addEventListener("click", () => {
-  const val = parseInt(layerCountInput.value, 10)
-  if (!isNaN(val)) {
-    setLayerCount(val)
-  }
-})
-layerCountInput.addEventListener("keydown", e => {
-  if (e.key === "Enter") {
-    e.preventDefault()
-    const val = parseInt(layerCountInput.value, 10)
-    if (!isNaN(val)) {
-      setLayerCount(val)
-    }
-  }
-})
+        /* ★ タブコンテンツ ★ */
+        .tab-content {
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .tab-content.active {
+            display: flex;
+        }
 
-// 背景色変更
-bgColorPicker.addEventListener("input", () => {
-  CONFIG.bgColor = bgColorPicker.value
-  drawPreview()
-})
+        .setting-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .setting-group label {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .setting-group select,
+        .setting-group input[type="checkbox"],
+        .setting-group input[type="number"] {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+            transition: border 0.2s;
+        }
+        .setting-group select:focus,
+        .setting-group input[type="number"]:focus {
+            border-color: var(--accent);
+        }
+        .setting-group select option {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+        .setting-group .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .setting-group .input-group .hint {
+            font-size: 12px;
+            color: #666;
+        }
+        .setting-group .input-group input[type="number"] {
+            width: 80px;
+        }
 
-// 解像度変更
-resolutionSelect.addEventListener("change", () => {
-  const [w, h] = resolutionSelect.value.split("x").map(Number)
-  CONFIG.resolution = { width: w, height: h }
-  canvas.width = w
-  canvas.height = h
-  drawPreview()
-  drawTimeline()
-})
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+            flex-shrink: 0;
+            padding: 0;
+        }
+        .checkbox-group label {
+            font-size: 14px;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
 
-// FPS変更
-fpsSelect.addEventListener("change", () => {
-  CONFIG.fps = Number(fpsSelect.value)
-  drawPreview()
-  drawTimeline()
-})
+        .settings-footer {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            flex-shrink: 0;
+        }
+        .settings-footer .btn-close {
+            padding: 8px 28px;
+            border: none;
+            border-radius: 8px;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .settings-footer .btn-close:hover {
+            opacity: 0.85;
+        }
 
-// -------- タブ切り替え設定 --------
-setupSettingsTabs()
+        /* ============================================================
+           メインコンテンツ（既存スタイル）
+           ============================================================ */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
 
-//-------- クリップ追加ボタン --------
-// テキスト追加ボタン
-const addTextBtn = document.getElementById("addTextBtn")
-addTextBtn.addEventListener("click", () => {
-  addClip("text")
-})
+        .top-section {
+            display: flex;
+            flex: 1;
+            min-height: 100px;
+            gap: 0;
+            position: relative;
+        }
 
-// 図形追加ボタン
-const addShapeBtn = document.getElementById("addShapeBtn")
-addShapeBtn.addEventListener("click", () => {
-  addClip("shape")
-})
+        .canvas-wrapper {
+            flex: 1;
+            min-width: 200px;
+            background: var(--bg-card);
+            border-radius: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        #canvas {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #00000000;
+            border-radius: 6px;
+            display: block;
+            image-rendering: pixelated;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: scale-down;
+        }
 
-// -------- イベント登録 --------
-deleteBtn.addEventListener("click", deleteSelected)
-playBtn.addEventListener("click", togglePlay)
+        .resize-handle-horizontal {
+            width: 6px;
+            cursor: col-resize;
+            background: var(--border-color);
+            flex-shrink: 0;
+            transition: background 0.2s;
+            position: relative;
+            z-index: 5;
+        }
+        .resize-handle-horizontal:hover,
+        .resize-handle-horizontal.active {
+            background: var(--accent);
+        }
+        .resize-handle-horizontal::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 2px;
+            height: 30px;
+            background: var(--text-secondary);
+            border-radius: 2px;
+            opacity: 0.5;
+        }
+        .resize-handle-horizontal:hover::before,
+        .resize-handle-horizontal.active::before {
+            opacity: 1;
+            background: var(--text-primary);
+        }
 
-fontSizeSlider.addEventListener("input", updateSelected)
-colorPicker.addEventListener("input", updateSelected)
+        .properties {
+            width: 380px;
+            min-width: 200px;
+            max-width: 600px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            background: var(--bg-secondary);
+            padding: 20px 20px;
+            overflow-y: auto;
+            border-left: 1px solid var(--border-color);
+        }
 
-shapeTypeSelect.addEventListener("change", updateSelected)
-fillColorPicker.addEventListener("input", updateSelected)
-strokeColorPicker.addEventListener("input", updateSelected)
-strokeWidthSlider.addEventListener("input", updateSelected)
-shapeWidthSlider.addEventListener("input", updateSelected)
-shapeHeightSlider.addEventListener("input", updateSelected)
+        .resize-handle-vertical {
+            height: 6px;
+            cursor: row-resize;
+            background: var(--border-color);
+            flex-shrink: 0;
+            transition: background 0.2s;
+            position: relative;
+            z-index: 5;
+        }
+        .resize-handle-vertical:hover,
+        .resize-handle-vertical.active {
+            background: var(--accent);
+        }
+        .resize-handle-vertical::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 2px;
+            background: var(--text-secondary);
+            border-radius: 2px;
+            opacity: 0.5;
+        }
+        .resize-handle-vertical:hover::before,
+        .resize-handle-vertical.active::before {
+            opacity: 1;
+            background: var(--text-primary);
+        }
 
-xSlider.addEventListener("input", updateSelected)
-ySlider.addEventListener("input", updateSelected)
-rotationSlider.addEventListener("input", updateSelected)
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .control-group label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            min-width: 60px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .control-group label.disabled {
+            color: #444;
+        }
+        .control-group textarea {
+            flex: 1;
+            min-width: 100px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+            outline: none;
+            transition: border 0.2s, opacity 0.2s;
+            resize: vertical;
+            min-height: 36px;
+            max-height: 120px;
+            line-height: 1.5;
+        }
+        .control-group textarea:focus {
+            border-color: var(--accent);
+        }
+        .control-group textarea:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .control-group select {
+            flex: 1;
+            min-width: 100px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+            transition: border 0.2s, opacity 0.2s;
+            font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+        }
+        .control-group select:focus {
+            border-color: var(--accent);
+        }
+        .control-group select:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .control-group select option {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+        .control-group input[type="range"] {
+            flex: 1;
+            min-width: 80px;
+            accent-color: var(--accent);
+            background: transparent;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .control-group input[type="range"]:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .control-group input[type="color"] {
+            width: 40px;
+            height: 34px;
+            padding: 2px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .control-group input[type="color"]:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .control-group input[type="number"] {
+            width: 72px;
+            padding: 4px 6px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: 'Consolas', monospace;
+            text-align: center;
+            outline: none;
+            transition: border 0.2s, opacity 0.2s;
+        }
+        .control-group input[type="number"]:focus {
+            border-color: var(--accent);
+        }
+        .control-group input[type="number"]:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .control-group input[type="number"]::-webkit-outer-spin-button,
+        .control-group input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .control-group input[type="number"] {
+            -moz-appearance: textfield;
+        }
 
-setupSliderDrag(
-  xSlider,
-  () => {
-    isDraggingX = true
-  },
-  () => {
-    isDraggingX = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRange(xSlider, selected.x, SLIDER_STAGES.coord, false)
-      drawPreview()
-    }
-  }
-)
+        .coord-input {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0 8px;
+            transition: opacity 0.2s;
+        }
+        .coord-input.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .coord-input.disabled input {
+            cursor: not-allowed;
+        }
+        .coord-input span {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-family: 'Consolas', monospace;
+        }
+        .coord-input input[type="number"] {
+            width: 54px;
+            border: none;
+            background: transparent;
+            padding: 4px 0;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-family: 'Consolas', monospace;
+            text-align: center;
+            outline: none;
+        }
+        .coord-input input[type="number"]:focus {
+            border: none;
+            outline: none;
+        }
+        .coord-input input[type="number"]::-webkit-outer-spin-button,
+        .coord-input input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .coord-input input[type="number"] {
+            -moz-appearance: textfield;
+        }
 
-setupSliderDrag(
-  ySlider,
-  () => {
-    isDraggingY = true
-  },
-  () => {
-    isDraggingY = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRange(ySlider, selected.y, SLIDER_STAGES.coord, false)
-      drawPreview()
-    }
-  }
-)
+        .btn-primary {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #f093fb, var(--accent));
+            color: #fff;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            white-space: nowrap;
+        }
+        .btn-primary:hover {
+            opacity: 0.85;
+        }
+        .btn-primary:active {
+            transform: scale(0.97);
+        }
+        .btn-danger {
+            background: #c0392b;
+        }
+        .btn-danger:hover {
+            background: #e74c3c;
+        }
+        .btn-sm {
+            padding: 4px 12px;
+            font-size: 12px;
+        }
 
-setupSliderDrag(
-  rotationSlider,
-  () => {
-    isDraggingRotation = true
-  },
-  () => {
-    isDraggingRotation = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRange(
-        rotationSlider,
-        selected.rotation,
-        SLIDER_STAGES.rotation,
-        false
-      )
-      drawPreview()
-    }
-  }
-)
+        .value {
+            font-size: 13px;
+            color: var(--text-secondary);
+            min-width: 44px;
+            text-align: right;
+            font-family: 'Consolas', monospace;
+            transition: color 0.2s;
+        }
+        .value.disabled {
+            color: #444;
+        }
 
-setupSliderDrag(
-  strokeWidthSlider,
-  () => {
-    isDraggingStroke = true
-  },
-  () => {
-    isDraggingStroke = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRangePositive(
-        strokeWidthSlider,
-        selected.strokeWidth || 0,
-        SLIDER_STAGES.stroke,
-        false
-      )
-      drawPreview()
-    }
-  }
-)
+        .separator {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 4px 0;
+        }
 
-setupSliderDrag(
-  shapeWidthSlider,
-  () => {
-    isDraggingWidth = true
-  },
-  () => {
-    isDraggingWidth = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRangePositive(
-        shapeWidthSlider,
-        selected.width || 100,
-        SLIDER_STAGES.size,
-        false
-      )
-      drawPreview()
-    }
-  }
-)
+        .time-input-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .time-input-group input[type="number"] {
+            width: 72px;
+        }
+        .time-input-group .unit {
+            font-size: 12px;
+            color: #666;
+            font-family: 'Consolas', monospace;
+        }
 
-setupSliderDrag(
-  shapeHeightSlider,
-  () => {
-    isDraggingHeight = true
-  },
-  () => {
-    isDraggingHeight = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRangePositive(
-        shapeHeightSlider,
-        selected.height || 100,
-        SLIDER_STAGES.size,
-        false
-      )
-      drawPreview()
-    }
-  }
-)
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 6px 0;
+            min-width: 120px;
+            z-index: 50;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            margin-top: 4px;
+        }
+        .dropdown-menu.active {
+            display: block;
+        }
+        .dropdown-menu button {
+            display: block;
+            width: 100%;
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-primary);
+            font-size: 13px;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.15s;
+            font-family: 'Segoe UI', 'Hiragino Sans', sans-serif;
+        }
+        .dropdown-menu button:hover {
+            background: var(--bg-primary);
+        }
+        .dropdown-menu .divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 4px 12px;
+        }
 
-setupSliderDrag(
-  fontSizeSlider,
-  () => {
-    isDraggingFontSize = true
-  },
-  () => {
-    isDraggingFontSize = false
-    const selected = getSelected()
-    if (selected) {
-      updateSliderRangePositive(
-        fontSizeSlider,
-        selected.fontSize || 50,
-        SLIDER_STAGES.fontSize,
-        false
-      )
-      drawPreview()
-    }
-  }
-)
+        /* ----- タイムライン ----- */
+        .bottom-section {
+            background: var(--bg-secondary);
+            border-radius: 0;
+            border: none;
+            border-top: 1px solid var(--border-color);
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 100px;
+            flex-shrink: 0;
+        }
 
-fontSelect.addEventListener("change", updateSelected)
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-shrink: 0;
+        }
 
-setupAllNumberInputs()
-setupKeyboardShortcuts()
-setupResizeHandles()
-setupPreviewDrag()
+        .timeline-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
 
-// -------- 設定切り替え用関数 --------
-function setOverlapPrevention(enabled) {
-  CONFIG.preventOverlap = enabled
-  overlapToggle.checked = enabled
-  if (enabled) {
-    for (const clip of clips) resolveOverlap(clip, clip.id)
-    syncUI()
-  }
-}
+        .timeline-controls .play-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .timeline-controls .play-btn:hover {
+            background: var(--border-color);
+        }
+        .timeline-controls .play-btn.playing {
+            background: var(--accent);
+        }
+        .timeline-controls .play-btn.playing:hover {
+            opacity: 0.85;
+        }
 
-function setBackgroundColor(color) {
-  CONFIG.bgColor = color
-  drawPreview()
-}
+        .timeline-controls .time-display {
+            font-size: 13px;
+            font-family: 'Consolas', monospace;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+        }
+        .timeline-controls .time-display .sep {
+            color: #555;
+        }
 
-// -------- デバッグ用グローバル公開 --------
-window.__editor = {
-  currentFrame,
-  clips,
-  drawPreview,
-  drawTimeline,
-  setFrame: frame => {
-    currentFrame = Math.max(0, Math.min(TIMELINE_DURATION * CONFIG.fps, frame))
-    drawPreview()
-    drawTimeline()
-    console.log(
-      `Frame set to ${currentFrame} (${(currentFrame / CONFIG.fps).toFixed(
-        2
-      )}s)`
-    )
-  },
-  getFrame: () => currentFrame,
-  getClips: () => clips,
-  togglePlay,
-  play: startPlayback,
-  stop: stopPlayback,
-  reset: () => {
-    stopPlayback()
-    currentFrame = 0
-    drawTimeline()
-    drawPreview()
-  },
-  setOverlapPrevention,
-  setBackgroundColor,
-  setLayerCount,
-  config: CONFIG,
-  applyTheme,
-  themes: THEMES
+        .timeline-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
 
-  // デバッグ用
-  //isOverlapping,      // 重なり判定関数を公開
-  //resolveOverlap,     // 重なり解消関数を公開
-  //findAvailableLayer, // 空きレイヤー探索関数を公開
-}
+        #timelineContainer {
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            background: var(--bg-primary);
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            padding: 4px 0;
+            position: relative;
+            min-height: 80px;
+            flex: 1;
+            max-height: 500px;
+            transition: height 0.15s ease;
+        }
+        #timelineContainer::-webkit-scrollbar {
+            height: 10px;
+        }
+        #timelineContainer::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+            border-radius: 5px;
+        }
+        #timelineContainer::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 5px;
+        }
 
-// -------- ズームイベント --------
-// ズームボタン（ボタンは動的に生成されるので、イベントは親要素に委譲）
-document.addEventListener("click", e => {
-  const target = e.target
-  if (target.id === "zoomOutBtn") {
-    zoomTimeline(0.8)
-  } else if (target.id === "zoomInBtn") {
-    zoomTimeline(1.25)
-  }
-})
+        .timeline-ruler {
+            position: relative;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 2px;
+            display: flex;
+            align-items: flex-end;
+        }
+        .timeline-ruler-inner {
+            position: relative;
+        }
 
-// ★ マウスホイール（Ctrl + ホイールでズーム、それ以外は横スクロール）
-timelineContainer.addEventListener(
-  "wheel",
-  e => {
-    if (e.ctrlKey || e.metaKey) {
-      // Ctrlキー（またはCommandキー）を押しながらホイール → ズーム
-      e.preventDefault()
-      const factor = e.deltaY > 0 ? 0.9 : 1.1
-      zoomTimeline(factor)
-    } else if (e.altKey) {
-      // Altキーを押しながらホイール → 縦スクロール
-      e.preventDefault()
-      const scrollAmount = e.deltaY * 0.3 // スクロール速度
-      timelineContainer.scrollTop += scrollAmount // ← timelineContainerに変更！
-    } else {
-      // 通常時のホイール → 横スクロール
-      e.preventDefault()
-      const scrollAmount = e.deltaY * 1.0 // スクロール速度
-      timelineContainer.scrollLeft += scrollAmount
-    }
-  },
-  { passive: false }
-)
+        .timeline-tick {
+            position: absolute;
+            bottom: 0;
+            height: 100%;
+            border-left: 1px solid #333;
+        }
+        .timeline-tick.major {
+            border-left-color: #555;
+        }
+        .timeline-tick.minor {
+            height: 50%;
+            border-left-color: var(--border-color);
+        }
+        .timeline-tick-label {
+            position: absolute;
+            bottom: 2px;
+            left: 4px;
+            font-size: 9px;
+            color: #555;
+            font-family: 'Consolas', monospace;
+            white-space: nowrap;
+        }
 
-// -------- 初期化 --------
-function init() {
-  selectedId = null
-  totalTimeDisplay.textContent = formatTime(TIMELINE_DURATION * CONFIG.fps)
-  currentLayerCount = CONFIG.layerCount
-  layerCountInput.value = String(CONFIG.layerCount)
-  applyTheme(CONFIG.theme)
-  syncUI()
+        .timeline-playhead {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background: var(--accent);
+            z-index: 10;
+            pointer-events: none;
+        }
+        .timeline-playhead::after {
+            content: '';
+            position: absolute;
+            top: -6px;
+            left: -4px;
+            width: 10px;
+            height: 10px;
+            background: var(--accent);
+            border-radius: 50%;
+        }
 
-  bottomSection.style.height = "400px"
-  bottomSection.style.minHeight = `${MIN_TIMELINE_HEIGHT}px`
-}
+        .timeline-track {
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            position: relative;
+            min-height: 32px;
+        }
+        .timeline-track:last-child {
+            border-bottom: none;
+        }
 
-init()
+        .timeline-track-label {
+            width: 80px;
+            min-width: 80px;
+            font-size: 10px;
+            color: #555;
+            font-family: 'Consolas', monospace;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            padding: 0 8px;
+            flex-shrink: 0;
+            text-align: right;
+            user-select: none;
+        }
 
-// -------- リサイズ --------
-function resizeCanvas() {
-  const container = canvas.parentElement
-  const containerWidth = container.clientWidth - 32
-  const aspectRatio = 16 / 9
-  let w = Math.min(containerWidth, 960)
-  let h = w / aspectRatio
-  if (h > window.innerHeight * 0.6) {
-    h = window.innerHeight * 0.6
-    w = h * aspectRatio
-  }
-  canvas.style.width = `${Math.floor(w)}px`
-  canvas.style.height = `${Math.floor(h)}px`
-}
-window.addEventListener("resize", resizeCanvas)
-//　-------- ウインドウリサイズ時にタイムラインも再描画 --------
-window.addEventListener("resize", () => {
-  drawTimeline()
-})
-setTimeout(resizeCanvas, 100)
+        .timeline-track-area {
+            position: relative;
+            height: 100%;
+            min-height: 28px;
+            cursor: pointer;
+        }
+
+        .timeline-clip {
+            position: absolute;
+            top: 2px;
+            height: calc(100% - 4px);
+            min-height: 24px;
+            border-radius: 3px;
+            cursor: grab;
+            transition: none;
+            display: flex;
+            align-items: center;
+            padding: 0 6px;
+            opacity: 0.8;
+            border: 1px solid rgba(255,255,255,0.1);
+            min-width: 4px;
+            overflow: hidden;
+            z-index: 2;
+            user-select: none;
+        }
+        .timeline-clip:hover {
+            opacity: 1;
+            border-color: rgba(255,255,255,0.3);
+        }
+        .timeline-clip.selected {
+            opacity: 1;
+            border-color: #fff;
+            box-shadow: 0 0 12px rgba(245, 87, 108, 0.4);
+            z-index: 3;
+        }
+        .timeline-clip.dragging {
+            opacity: 0.5;
+            z-index: 5;
+            cursor: grabbing;
+        }
+
+        .timeline-clip-label {
+            font-size: 10px;
+            color: #fff;
+            font-family: 'Segoe UI', sans-serif;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+            font-weight: 500;
+            pointer-events: none;
+        }
+
+        .timeline-add-layer {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-top: 1px solid var(--border-color);
+            padding-left: 80px;
+            padding-right: 20px;
+            background: var(--bg-primary);
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .timeline-add-layer:hover {
+            background: var(--bg-secondary);
+        }
+        .timeline-add-layer .btn-primary {
+            width: 100%;
+            max-width: 200px;
+            transition: all 0.2s;
+        }
+        #addLayerInputContainer {
+            display: none;
+            margin-left: 10px;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+        }
+        #addLayerInputContainer input[type="number"] {
+            width: 60px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+        #addLayerInputContainer input[type="number"]::-webkit-outer-spin-button,
+        #addLayerInputContainer input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        #addLayerInputContainer input[type="number"] {
+            -moz-appearance: textfield;
+        }
+        #addLayerInputContainer .hint {
+            font-size: 12px;
+            color: #666;
+        }
+
+        @media (max-width: 1000px) {
+            .app {
+                height: auto;
+                max-height: none;
+            }
+            .top-section {
+                flex-direction: column;
+                min-height: 300px;
+            }
+            .properties {
+                width: 100%;
+                min-width: 0;
+                max-width: none;
+                max-height: 300px;
+                border-left: none;
+                border-top: 1px solid var(--border-color);
+                flex-direction: row;
+                flex-wrap: wrap;
+                padding: 16px;
+                gap: 10px;
+            }
+            .control-group {
+                flex: 1;
+                min-width: 160px;
+            }
+            .canvas-wrapper {
+                width: 100%;
+                min-height: 200px;
+            }
+            .resize-handle-horizontal {
+                width: 100%;
+                height: 6px;
+                cursor: row-resize;
+            }
+            .resize-handle-horizontal::before {
+                width: 30px;
+                height: 2px;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+            }
+            .bottom-section {
+                min-height: 150px;
+            }
+            #timelineContainer {
+                max-height: 300px;
+            }
+            .settings-window {
+                width: 92vw;
+                padding: 20px 24px;
+            }
+            .resize-handle-vertical {
+                display: none;
+            }
+            .timeline-add-layer {
+                padding-left: 50px;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .control-group {
+                flex: 1 1 100%;
+                min-width: 0;
+            }
+            .properties {
+                padding: 12px;
+                gap: 8px;
+                max-height: 250px;
+            }
+            .timeline-track-label {
+                width: 50px;
+                min-width: 50px;
+                font-size: 8px;
+            }
+            #timelineContainer {
+                max-height: 200px;
+                min-height: 60px;
+            }
+            .timeline-controls .time-display {
+                font-size: 11px;
+            }
+            .control-group label {
+                min-width: 50px;
+                font-size: 12px;
+            }
+            .settings-window {
+                padding: 16px 18px;
+                max-height: 90vh;
+            }
+            .settings-header h2 {
+                font-size: 18px;
+            }
+            .setting-group .input-group input[type="number"] {
+                width: 60px;
+            }
+            .timeline-add-layer {
+                padding-left: 50px;
+                height: 28px;
+            }
+            .timeline-add-layer .btn-primary {
+                font-size: 11px;
+                padding: 4px 10px;
+            }
+            #addLayerInputContainer {
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+            #addLayerInputContainer input[type="number"] {
+                width: 50px;
+            }
+            .resize-handle-horizontal {
+                height: 4px;
+            }
+            .settings-tabs button {
+                font-size: 12px;
+                padding: 6px 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header>
+            <div class="header-left">
+                <h1>AJ Video Editor</h1>
+                <button class="settings-toggle" id="settingsToggle" title="Settings">⚙</button>
+            </div>
+            <span class="badge">alpha · local</span>
+        </header>
+
+        <!-- ★ 設定オーバーレイ（タブ分割） ★ -->
+        <div class="settings-overlay" id="settingsOverlay">
+            <div class="settings-window" id="settingsWindow">
+                <div class="settings-header">
+                    <h2>⚙ Settings</h2>
+                    <button class="settings-close" id="settingsClose">✕</button>
+                </div>
+
+                <!-- ★ タブメニュー ★ -->
+                <div class="settings-tabs" id="settingsTabs">
+                    <button class="active" data-tab="project">Project</button>
+                    <button data-tab="editor">Editor</button>
+                </div>
+
+                <div class="settings-body">
+                    <!-- ★ Project タブ ★ -->
+                    <div class="tab-content active" id="tabProject">
+                        <!-- Number of Layers -->
+                        <div class="setting-group">
+                            <label for="layerCountInput">Number of Layers</label>
+                            <div class="input-group">
+                                <input type="number" id="layerCountInput" value="10" min="1" max="99" />
+                                <span class="hint">(1〜99)</span>
+                                <button class="btn-primary btn-sm" id="applyLayerCountBtn">Apply</button>
+                            </div>
+                        </div>
+                    
+                        <!-- ★ 背景色 ★ -->
+                        <div class="setting-group">
+                            <label for="bgColorPicker">Background Color</label>
+                            <input type="color" id="bgColorPicker" value="#000000"
+                                style="width:60px;height:40px;padding:2px;border:1px solid var(--border-color);border-radius:6px;background:transparent;cursor:pointer;" />
+                        </div>
+                    
+                        <!-- ★ 解像度 ★ -->
+                        <div class="setting-group">
+                            <label for="resolutionSelect">Resolution</label>
+                            <select id="resolutionSelect">
+                                <option value="1920x1080">1920 x 1080 (横)</option>
+                                <option value="1280x720">1280 x 720 (横)</option>
+                                <option value="1080x1920">1080 x 1920 (縦)</option>
+                                <option value="720x1280">720 x 1280 (縦)</option>
+                            </select>
+                        </div>
+                    
+                        <!-- ★ FPS ★ -->
+                        <div class="setting-group">
+                            <label for="fpsSelect">FPS</label>
+                            <select id="fpsSelect">
+                                <option value="15">15 fps</option>
+                                <option value="20">20 fps</option>
+                                <option value="24">24 fps</option>
+                                <option value="30">30 fps</option>
+                                <option value="48">48 fps</option>
+                                <option value="60"selected>60 fps</option>
+                                <option value="120">120 fps</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- ★ Editor タブ ★ -->
+                    <div class="tab-content" id="tabEditor">
+                        <div class="setting-group">
+                            <label for="themeSelect">Theme</label>
+                            <select id="themeSelect">
+                                <option value="white" selected>ホワイト（シンプル）</option>
+                                <option value="white-red">レッド（明）</option>
+                                <option value="white-blue">ブルー（明）</option>
+                                <option value="white-green">グリーン（明）</option>
+                                <option value="white-yellow">イエロー（明）</option>
+                                <option value="white-purple">パープル（明）</option>
+                                <option value="black">ブラック（シンプル）</option>
+                                <option value="black-red">レッド（暗）</option>
+                                <option value="black-blue">ブルー（暗）</option>
+                                <option value="black-green">グリーン（暗）</option>
+                                <option value="black-yellow">イエロー（暗）</option>
+                                <option value="black-purple">パープル（暗）</option>
+                            </select>
+                        </div>
+
+                        <div class="setting-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="overlapToggle" checked />
+                                <label for="overlapToggle">アイテムの重なり防止</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-footer">
+                    <button class="btn-close" id="settingsCloseBtn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================
+        メインコンテンツ
+        ============================================================ -->
+        <div class="main-content">
+            <div class="top-section" id="topSection">
+                <div class="canvas-wrapper" id="canvasWrapper">
+                    <canvas id="canvas" width="1920" height="1080"></canvas>
+                </div>
+
+                <div class="resize-handle-horizontal" id="resizeHandleHorizontal"></div>
+
+                <div class="properties" id="propertiesPanel">
+                    <div class="control-group">
+                        <label>Type</label>
+                        <span id="typeDisplay" style="font-size:13px;color:var(--text-secondary);">-</span>
+                    </div>
+
+                    <div id="textProperties">
+                        <div class="control-group">
+                            <label>Text</label>
+                            <textarea id="textInput" rows="1"></textarea>
+                        </div>
+                        <div class="control-group">
+                            <label>Font</label>
+                            <select id="fontSelect">
+                                <option value='"Hiragino Sans", "Microsoft YaHei", sans-serif'>デフォルト</option>
+                                <option value='"Hina Mincho", serif'>Hina Mincho</option>
+                                <option value='"Hachi Maru Pop", serif'>Hachi Maru Pop</option>
+                                <option value='"Noto Sans JP", sans-serif'>Noto Sans JP</option>
+                                <option value='"Noto Serif JP", serif'>Noto Serif JP</option>
+                                <option value='"Yuji Boku", serif'>Yuji Boku</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Size</label>
+                            <input type="range" id="fontSize" min="0" max="100" value="50" />
+                            <span class="value" id="fontSizeLabel">--</span>
+                        </div>
+                        <div class="control-group">
+                            <label>Color</label>
+                            <input type="color" id="colorPicker" value="#ffffff" />
+                        </div>
+                    </div>
+
+                    <div id="shapeProperties" style="display:none;">
+                        <div class="control-group">
+                            <label>Shape</label>
+                            <select id="shapeTypeSelect">
+                                <option value="rectangle">四角形</option>
+                                <option value="triangle">三角形</option>
+                                <option value="circle">円</option>
+                                <option value="pie">扇形</option>
+                                <option value="arrow">矢印</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Fill</label>
+                            <input type="color" id="fillColorPicker" value="#ffffff" />
+                        </div>
+                        <div class="control-group">
+                            <label>Stroke</label>
+                            <input type="color" id="strokeColorPicker" value="#ffffff" />
+                        </div>
+                        <div class="control-group">
+                            <label>Stroke W</label>
+                            <input type="range" id="strokeWidthSlider" min="0" max="100" value="0" step="1" />
+                            <span class="value" id="strokeWidthLabel">0px</span>
+                        </div>
+                        <div class="control-group">
+                            <label>Width</label>
+                            <input type="range" id="shapeWidthSlider" min="0" max="100" value="100" step="1" />
+                            <span class="value" id="shapeWidthLabel">100px</span>
+                        </div>
+                        <div class="control-group">
+                            <label>Height</label>
+                            <input type="range" id="shapeHeightSlider" min="0" max="100" value="100" step="1" />
+                            <span class="value" id="shapeHeightLabel">100px</span>
+                        </div>
+                    </div>
+
+                    <hr class="separator" />
+
+                    <div class="control-group">
+                        <label>X</label>
+                        <input type="range" id="xPos" min="-500" max="500" value="0" step="1" />
+                        <div class="coord-input">
+                            <span>X:</span>
+                            <input type="number" id="xNumber" value="0" min="-8000" max="8000" />
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Y</label>
+                        <input type="range" id="yPos" min="-500" max="500" value="0" step="1" />
+                        <div class="coord-input">
+                            <span>Y:</span>
+                            <input type="number" id="yNumber" value="0" min="-8000" max="8000" />
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Rotation</label>
+                        <input type="range" id="rotationSlider" min="-180" max="180" value="0" step="1" />
+                        <div class="coord-input">
+                            <span>R:</span>
+                            <input type="number" id="rotationNumber" value="0" min="-1440" max="1440" step="1" />
+                            <span style="font-size:12px;color:#666;">°</span>
+                        </div>
+                    </div>
+
+                    <hr class="separator" />
+
+                    <div class="control-group">
+                        <label>Start</label>
+                        <div class="time-input-group">
+                            <input type="number" id="startInput" value="0" min="0" max="600" />
+                            <span class="unit">fr</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Duration</label>
+                        <div class="time-input-group">
+                            <input type="number" id="durationInput" value="90" min="1" max="600" />
+                            <span class="unit">fr</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="resize-handle-vertical" id="resizeHandleVertical"></div>
+
+            <div class="bottom-section" id="bottomSection">
+                <div class="timeline-header">
+                    <div class="timeline-controls">
+                        <button class="play-btn" id="playBtn">▶</button>
+                        <span class="time-display">
+                            <span id="currentTime">00:00.0</span>
+                            <span class="sep"> / </span>
+                            <span id="totalTime">00:20.0</span>
+                        </span>
+                    </div>
+                    <div class="timeline-actions">
+                        <div class="dropdown" id="addDropdown">
+                            <button class="btn-primary btn-sm" id="addBtn">+ Add ▼</button>
+                            <div class="dropdown-menu" id="addDropdownMenu">
+                                <button data-type="text">📝 テキスト</button>
+                                <div class="divider"></div>
+                                <button data-type="shape">⬜ 図形</button>
+                            </div>
+                        </div>
+                        <button class="btn-primary btn-sm btn-danger" id="deleteBtn">×</button>
+                    </div>
+                </div>
+                <div id="timelineContainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+            // AJ Video Editor - エントリーポイント
+            // フェーズ12: プレビュー上でクリップをドラッグ移動
+            // ============================================================
+
+    </script>
+</body>
+</html>
