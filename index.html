@@ -1485,6 +1485,11 @@
                         <button class="btn-primary btn-sm" id="addTextBtn">📝 テキスト</button>
                         <button class="btn-primary btn-sm" id="addShapeBtn">⬜ 図形</button>
                         <button class="btn-primary btn-sm btn-danger" id="deleteBtn">×</button>
+
+                        <!-- ★ 追加: プロジェクト保存/読み込みボタン -->
+                        <button class="btn-primary btn-sm" id="saveProjectBtn">💾 保存</button>
+                        <button class="btn-primary btn-sm" id="loadProjectBtn">📂 読み込み</button>
+                        <input type="file" id="loadProjectInput" accept=".ajp" style="display:none;" />
                     </div>
                 </div>
                 <div id="timelineContainer"></div>
@@ -3467,6 +3472,125 @@
         function setBackgroundColor(color) {
             CONFIG.bgColor = color;
             drawPreview();
+        }
+        // ★ 追加: プロジェクト保存
+        function saveProject() {
+            try {
+                const projectData = {
+                    version: '1.0',
+                    clips: clips,
+                    config: {
+                        preventOverlap: CONFIG.preventOverlap,
+                        bgColor: CONFIG.bgColor,
+                        resolution: CONFIG.resolution,
+                        fps: CONFIG.fps,
+                        layerCount: CONFIG.layerCount,
+                    },
+                    currentFrame: currentFrame,
+                    selectedId: selectedId,
+                    layerCount: currentLayerCount,
+                    timestamp: new Date().toISOString(),
+                };
+                const json = JSON.stringify(projectData, null, 2);
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `project-${new Date().toISOString().slice(0, 10)}.ajp`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                console.log('Project saved successfully!');
+            }
+            catch (err) {
+                console.error('Save error:', err);
+                alert('プロジェクトの保存に失敗しました。');
+            }
+        }
+        // ★ 追加: プロジェクト読み込み
+        function loadProject(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                var _a;
+                try {
+                    const data = JSON.parse((_a = e.target) === null || _a === void 0 ? void 0 : _a.result);
+                    // バージョンチェック
+                    if (data.version !== '1.0') {
+                        console.warn('Different project version:', data.version);
+                        if (!confirm(`プロジェクトのバージョンが異なります (${data.version})。\n読み込みを続行しますか？`)) {
+                            return;
+                        }
+                    }
+                    // クリップデータを復元（IDカウンターはリセットしない）
+                    clips = data.clips || [];
+                    // 設定を復元
+                    if (data.config) {
+                        if (data.config.preventOverlap !== undefined) {
+                            CONFIG.preventOverlap = data.config.preventOverlap;
+                            overlapToggle.checked = CONFIG.preventOverlap;
+                        }
+                        if (data.config.bgColor) {
+                            CONFIG.bgColor = data.config.bgColor;
+                            bgColorPicker.value = CONFIG.bgColor;
+                        }
+                        if (data.config.resolution) {
+                            CONFIG.resolution = data.config.resolution;
+                            canvas.width = CONFIG.resolution.width;
+                            canvas.height = CONFIG.resolution.height;
+                            resolutionSelect.value = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+                        }
+                        if (data.config.fps) {
+                            CONFIG.fps = data.config.fps;
+                            fpsSelect.value = String(CONFIG.fps);
+                        }
+                        if (data.config.layerCount) {
+                            CONFIG.layerCount = data.config.layerCount;
+                            currentLayerCount = data.config.layerCount;
+                            layerCountInput.value = String(CONFIG.layerCount);
+                        }
+                    }
+                    // 再生位置を復元
+                    currentFrame = data.currentFrame || 0;
+                    // 選択状態を復元
+                    selectedId = data.selectedId || null;
+                    // レイヤー数を復元
+                    if (data.layerCount) {
+                        currentLayerCount = data.layerCount;
+                    }
+                    // UIを更新
+                    syncUI();
+                    drawPreview();
+                    drawTimeline();
+                    console.log(`Project loaded successfully! (${clips.length} clips)`);
+                    alert(`プロジェクトを読み込みました！\nクリップ数: ${clips.length}`);
+                }
+                catch (err) {
+                    console.error('Load error:', err);
+                    alert('プロジェクトの読み込みに失敗しました。\nファイルが壊れている可能性があります。');
+                }
+            };
+            reader.readAsText(file);
+        }
+        // ★ 追加: プロジェクト保存/読み込みのイベント
+        const saveBtn = document.getElementById('saveProjectBtn');
+        const loadBtn = document.getElementById('loadProjectBtn');
+        const loadInput = document.getElementById('loadProjectInput');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', saveProject);
+        }
+        if (loadBtn && loadInput) {
+            loadBtn.addEventListener('click', () => {
+                loadInput.click();
+            });
+            loadInput.addEventListener('change', (e) => {
+                var _a;
+                const file = (_a = e.target.files) === null || _a === void 0 ? void 0 : _a[0];
+                if (file) {
+                    loadProject(file);
+                }
+                loadInput.value = ''; // 同じファイルを再度選べるようにリセット
+            });
         }
         // -------- デバッグ用グローバル公開 --------
         window.__editor = {
