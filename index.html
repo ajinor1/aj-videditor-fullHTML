@@ -1515,6 +1515,8 @@
             resolution: { width: 1920, height: 1080 },
             fps: 60,
         };
+        // ★ 追加: localStorageのキー
+        const STORAGE_KEY = 'aj-videditor-settings';
         // -------- configを参照する定数 --------
         const totalFrames = TIMELINE_DURATION * CONFIG.fps;
         const DEFAULT_CLIP_DURATION = 3 * CONFIG.fps;
@@ -1680,7 +1682,7 @@
         const canvasWrapper = document.getElementById('canvasWrapper');
         const propertiesPanel = document.getElementById('propertiesPanel');
         const bottomSection = document.getElementById('bottomSection');
-        // ★ 図形用数値入力
+        // 図形用数値入力
         const strokeWidthNumber = document.getElementById('strokeWidthNumber');
         const shapeWidthNumber = document.getElementById('shapeWidthNumber');
         const shapeHeightNumber = document.getElementById('shapeHeightNumber');
@@ -1695,7 +1697,7 @@
         let isPlaying = false;
         let playInterval = null;
         let currentLayerCount = CONFIG.layerCount;
-        // ★ ズーム関連
+        // ズーム関連
         let timelineZoom = 1.0;
         const MIN_ZOOM = 0.25;
         const MAX_ZOOM = 8.0;
@@ -1930,6 +1932,37 @@
             ctx.restore();
         }
         // -------- テーマ適用 --------
+        // ★ 追加: 設定をlocalStorageに保存
+        function saveSettings() {
+            try {
+                const settings = {
+                    theme: CONFIG.theme,
+                    preventOverlap: CONFIG.preventOverlap,
+                    //bgColor: CONFIG.bgColor,
+                    //layerCount: CONFIG.layerCount,
+                    //resolution: CONFIG.resolution,
+                    //fps: CONFIG.fps,
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+            }
+            catch (e) {
+                // localStorageが使えない環境でもエラーにしない
+                console.warn('Settings save failed:', e);
+            }
+        }
+        // ★ 追加: localStorageから設定を読み込む
+        function loadSettings() {
+            try {
+                const data = localStorage.getItem(STORAGE_KEY);
+                if (!data)
+                    return null;
+                return JSON.parse(data);
+            }
+            catch (e) {
+                console.warn('Settings load failed:', e);
+                return null;
+            }
+        }
         function applyTheme(themeName) {
             const theme = THEMES[themeName];
             if (!theme)
@@ -1944,6 +1977,8 @@
             root.style.setProperty('--accent', theme.accent);
             CONFIG.theme = themeName;
             themeSelect.value = themeName;
+            // ★ 修正箇所: テーマ変更時に保存
+            saveSettings();
         }
         // -------- プレビュー描画 --------
         function drawPreview() {
@@ -2212,15 +2247,15 @@
                     const color = getClipColor(clip.type);
                     const isDragging = isDraggingClip && dragClipId === clip.id;
                     const opacity = isDragging ? '0.5' : '0.8';
-                    // ★ 図形の名前を先頭大文字に
+                    // 図形の名前を先頭大文字に
                     const shapeName = clip.shapeType || 'shape';
                     const capitalized = shapeName.charAt(0).toUpperCase() + shapeName.slice(1);
-                    // ★ ラベル生成（テキストはそのまま、図形は先頭大文字＋スペース）
+                    // ラベル生成（テキストはそのまま、図形は先頭大文字＋スペース）
                     const label = clip.type === 'text'
                         ? (clip.text || 'Text').replace(/\n/g, ' ')
                         : '\u00A0\u00A0\u00A0' + capitalized;
                     const endFrame = clip.startFrame + clip.duration;
-                    // ★ 最小幅を1pxに変更
+                    // 最小幅を1pxに変更
                     const oneFrameWidth = pixelsPerSecond / CONFIG.fps;
                     const minWidth = Math.max(1, oneFrameWidth * 0.5);
                     const displayWidth = Math.max(width, minWidth);
@@ -2257,7 +2292,7 @@
                 });
             });
             document.querySelectorAll('.timeline-clip').forEach(el => {
-                // ★ 修正箇所: リサイズかドラッグかを判定
+                // 修正箇所: リサイズかドラッグかを判定
                 el.addEventListener('mousedown', (e) => {
                     const id = el.getAttribute('data-clip-id');
                     if (!id)
@@ -2281,7 +2316,7 @@
                     }
                 });
             });
-            // ★ 追加: ホバー時にカーソルを変更（リサイズ可能な端を示す）
+            // ホバー時にカーソルを変更（リサイズ可能な端を示す）
             document.querySelectorAll('.timeline-clip').forEach(el => {
                 el.addEventListener('mousemove', (e) => {
                     if (isResizingClip || isDraggingClip)
@@ -2430,9 +2465,9 @@
             const rect = container.getBoundingClientRect();
             const containerWidth = container.clientWidth - 4;
             const pixelsPerSecond = getPixelsPerSecond(containerWidth);
-            // ★ マウスの位置を取得（タイムライン上の座標）
+            // マウスの位置を取得（タイムライン上の座標）
             const mouseX = e.clientX - rect.left - TIMELINE_PADDING_LEFT + container.scrollLeft;
-            // ★ マウスの位置をフレームに変換
+            // マウスの位置をフレームに変換
             const mouseFrame = Math.round((mouseX / pixelsPerSecond) * CONFIG.fps);
             const oldStartFrame = clip.startFrame;
             const oldDuration = clip.duration;
@@ -2560,7 +2595,7 @@
             const layerIndex = Math.floor(trackY / TIMELINE_HEIGHT);
             let newLayerId = layerIndex + 1;
             newLayerId = Math.max(1, Math.min(currentLayerCount, newLayerId));
-            // ★ 横移動を先に試す（同じレイヤーのまま）
+            // 横移動を先に試す（同じレイヤーのまま）
             const oldStartFrame = clip.startFrame;
             const oldLayerId = clip.layerId;
             clip.startFrame = newStartFrame;
@@ -2586,7 +2621,7 @@
                     clip.startFrame = oldStartFrame;
                 }
             }
-            // ★ レイヤー変更を試す（横移動は維持したまま）
+            // レイヤー変更を試す（横移動は維持したまま）
             if (newLayerId !== oldLayerId) {
                 const currentStartFrame = clip.startFrame;
                 clip.layerId = newLayerId;
@@ -2765,7 +2800,7 @@
             const tenths = Math.floor((seconds % 1) * 10);
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${tenths}`;
         }
-        // ★ ヘルパー関数
+        // ヘルパー関数
         function getVisibleDuration() {
             return TIMELINE_DURATION / timelineZoom;
         }
@@ -2797,7 +2832,7 @@
                 zoomLevelDisplay.textContent = `${percent}%`;
             }
         }
-        // ★ ズーム制御関数
+        // ズーム制御関数
         function zoomTimeline(factor) {
             const oldZoom = timelineZoom;
             const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, timelineZoom * factor));
@@ -2839,7 +2874,7 @@
                     fillColorPicker.value = selected.fillColor || '#ffffff';
                     strokeColorPicker.value = selected.strokeColor || '#ffffff';
                     strokeWidthSlider.value = String(selected.strokeWidth || 0);
-                    // ★ 数値入力にも反映
+                    // 数値入力にも反映
                     strokeWidthNumber.value = String(selected.strokeWidth || 0);
                     shapeWidthSlider.value = String(selected.width || 100);
                     shapeWidthNumber.value = String(selected.width || 100);
@@ -3124,7 +3159,7 @@
                         drawPreview();
                     }
                 },
-                // ===== ★ 追加：Stroke W =====
+                // ===== Stroke W =====
                 {
                     input: strokeWidthNumber,
                     slider: strokeWidthSlider,
@@ -3143,7 +3178,7 @@
                         drawPreview();
                     }
                 },
-                // ===== ★ 追加：Width =====
+                // ===== Width =====
                 {
                     input: shapeWidthNumber,
                     slider: shapeWidthSlider,
@@ -3162,7 +3197,7 @@
                         drawPreview();
                     }
                 },
-                // ===== ★ 追加：Height =====
+                // ===== Height =====
                 {
                     input: shapeHeightNumber,
                     slider: shapeHeightSlider,
@@ -3292,7 +3327,10 @@
         });
         // -------- 設定UIのイベント登録 --------
         themeSelect.addEventListener('change', () => applyTheme(themeSelect.value));
-        overlapToggle.addEventListener('change', () => { CONFIG.preventOverlap = overlapToggle.checked; });
+        overlapToggle.addEventListener('change', () => {
+            CONFIG.preventOverlap = overlapToggle.checked;
+            saveSettings(); // ★ 修正箇所: 保存
+        });
         applyLayerCountBtn.addEventListener('click', () => {
             const val = parseInt(layerCountInput.value, 10);
             if (!isNaN(val)) {
@@ -3470,7 +3508,7 @@
                 zoomTimeline(1.25);
             }
         });
-        // ★ マウスホイール（Ctrl + ホイールでズーム、それ以外は横スクロール）
+        // マウスホイール（Ctrl + ホイールでズーム、それ以外は横スクロール）
         timelineContainer.addEventListener('wheel', (e) => {
             if (e.ctrlKey || e.metaKey) {
                 // Ctrlキー（またはCommandキー）を押しながらホイール → ズーム
@@ -3493,13 +3531,29 @@
         }, { passive: false });
         // -------- 初期化 --------
         function init() {
+            // ★ 保存されたテーマと重なり防止を読み込む
+            const savedSettings = loadSettings();
+            if (savedSettings) {
+                if (savedSettings.theme) {
+                    CONFIG.theme = savedSettings.theme;
+                }
+                if (savedSettings.preventOverlap !== undefined) {
+                    CONFIG.preventOverlap = savedSettings.preventOverlap;
+                }
+            }
             selectedId = null;
             totalTimeDisplay.textContent = formatTime(TIMELINE_DURATION * CONFIG.fps);
             currentLayerCount = CONFIG.layerCount;
             layerCountInput.value = String(CONFIG.layerCount);
             applyTheme(CONFIG.theme);
+            // ★ 重なり防止の状態を復元
+            overlapToggle.checked = CONFIG.preventOverlap;
+            // ★ 他の設定はデフォルトのまま（保存・復元しない）
+            bgColorPicker.value = CONFIG.bgColor;
+            resolutionSelect.value = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
+            fpsSelect.value = String(CONFIG.fps);
             syncUI();
-            bottomSection.style.height = '400px';
+            bottomSection.style.height = '270px';
             bottomSection.style.minHeight = `${MIN_TIMELINE_HEIGHT}px`;
         }
         init();
@@ -3526,4 +3580,5 @@
 
     </script>
 </body>
+
 </html>
