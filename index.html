@@ -1524,7 +1524,7 @@
             fps: 60,
             text_wheel_step: 3
         };
-        // ★ 追加: localStorageのキー
+        // localStorageのキー
         const STORAGE_KEY = 'aj-videditor-settings';
         // -------- configを参照する定数 --------
         const totalFrames = TIMELINE_DURATION * CONFIG.fps;
@@ -1951,7 +1951,7 @@
             ctx.restore();
         }
         // -------- テーマ適用 --------
-        // ★ 追加: 設定をlocalStorageに保存
+        // 設定をlocalStorageに保存
         function saveSettings() {
             try {
                 const settings = {
@@ -1969,7 +1969,7 @@
                 console.warn('Settings save failed:', e);
             }
         }
-        // ★ 追加: localStorageから設定を読み込む
+        // localStorageから設定を読み込む
         function loadSettings() {
             try {
                 const data = localStorage.getItem(STORAGE_KEY);
@@ -1996,7 +1996,7 @@
             root.style.setProperty('--accent', theme.accent);
             CONFIG.theme = themeName;
             themeSelect.value = themeName;
-            // ★ 修正箇所: テーマ変更時に保存
+            //  テーマ変更時に保存
             saveSettings();
         }
         // -------- プレビュー描画 --------
@@ -2065,6 +2065,8 @@
                         ctx.save();
                         ctx.translate(drawX, drawY);
                         ctx.rotate(clip.rotation * Math.PI / 180);
+                        // ★ 追加: measureText の前に font を設定！
+                        ctx.font = `${clip.fontSize || 48}px ${clip.fontFamily || DEFAULT_FONT}`;
                         let maxWidth = 0;
                         for (const line of lines) {
                             const metrics = ctx.measureText(line);
@@ -2073,8 +2075,8 @@
                         }
                         const width = maxWidth || 50;
                         const height = totalHeight;
-                        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                        ctx.lineWidth = 4;
                         ctx.setLineDash([4, 6]);
                         ctx.strokeRect(-width / 2 - 10, -height / 2 - 10, width + 20, height + 20);
                         ctx.setLineDash([]);
@@ -2092,8 +2094,8 @@
                         ctx.save();
                         ctx.translate(drawX, drawY);
                         ctx.rotate(clip.rotation * Math.PI / 180);
-                        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                        ctx.lineWidth = 4;
                         ctx.setLineDash([4, 6]);
                         ctx.strokeRect(-w / 2 - 10, -h / 2 - 10, w + 20, h + 20);
                         ctx.setLineDash([]);
@@ -2212,6 +2214,8 @@
                     xSlider.value = String(newX);
                     yNumber.value = String(newY);
                     ySlider.value = String(newY);
+                    updateSliderRange(xSlider, newX, SLIDER_STAGES.coord, false);
+                    updateSliderRange(ySlider, newY, SLIDER_STAGES.coord, false);
                 }
                 drawPreview();
             };
@@ -2238,7 +2242,7 @@
             // テキストクリップ以外は無視
             if (!clip || clip.type !== 'text')
                 return;
-            // ★ 重なり対応: 同じ位置に複数ある場合は最前面（layerIdが最大）を選ぶ
+            // 重なり対応: 同じ位置に複数ある場合は最前面（layerIdが最大）を選ぶ
             const visibleClips = getClipsAtFrame(currentFrame);
             const textClipsAtPos = visibleClips.filter(c => {
                 var _a;
@@ -2274,10 +2278,11 @@
             const currentSize = targetClip.fontSize || 50;
             const newSize = Math.max(0, Math.min(3200, currentSize + delta));
             targetClip.fontSize = newSize;
-            // ★ パネル連動（選択中なら更新）
+            // パネル連動（選択中なら更新）
             if (selectedId === targetClip.id) {
                 fontSizeSlider.value = String(newSize);
                 fontSizeNumber.value = String(newSize);
+                updateSliderRangePositive(fontSizeSlider, newSize, SLIDER_STAGES.fontSize, false);
             }
             drawPreview();
             drawTimeline();
@@ -3418,7 +3423,7 @@
         themeSelect.addEventListener('change', () => applyTheme(themeSelect.value));
         overlapToggle.addEventListener('change', () => {
             CONFIG.preventOverlap = overlapToggle.checked;
-            saveSettings(); // ★ 修正箇所: 保存
+            saveSettings(); // 保存
         });
         applyLayerCountBtn.addEventListener('click', () => {
             const val = parseInt(layerCountInput.value, 10);
@@ -3469,7 +3474,7 @@
             addClip('shape');
         });
         // -------- イベント登録 --------
-        // ★ 追加: テキスト入力のリアルタイム更新
+        // テキスト入力のリアルタイム更新
         textInput.addEventListener('input', updateSelected);
         deleteBtn.addEventListener('click', deleteSelected);
         playBtn.addEventListener('click', togglePlay);
@@ -3560,7 +3565,7 @@
             CONFIG.bgColor = color;
             drawPreview();
         }
-        // ★ 追加: プロジェクト保存
+        // プロジェクト保存
         function saveProject() {
             try {
                 const projectData = {
@@ -3595,7 +3600,7 @@
                 alert('プロジェクトの保存に失敗しました。');
             }
         }
-        // ★ 追加: プロジェクト読み込み
+        // プロジェクト読み込み
         function loadProject(file) {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -3659,7 +3664,7 @@
             };
             reader.readAsText(file);
         }
-        // ★ 追加: プロジェクト保存/読み込みのイベント
+        // プロジェクト保存/読み込みのイベント
         const saveBtn = document.getElementById('saveProjectBtn');
         const loadBtn = document.getElementById('loadProjectBtn');
         const loadInput = document.getElementById('loadProjectInput');
@@ -3742,7 +3747,7 @@
         }, { passive: false });
         // -------- 初期化 --------
         function init() {
-            // ★ 保存されたテーマと重なり防止を読み込む
+            // 保存されたテーマと重なり防止を読み込む
             const savedSettings = loadSettings();
             if (savedSettings) {
                 if (savedSettings.theme) {
@@ -3757,9 +3762,9 @@
             currentLayerCount = CONFIG.layerCount;
             layerCountInput.value = String(CONFIG.layerCount);
             applyTheme(CONFIG.theme);
-            // ★ 重なり防止の状態を復元
+            // 重なり防止の状態を復元
             overlapToggle.checked = CONFIG.preventOverlap;
-            // ★ 他の設定はデフォルトのまま（保存・復元しない）
+            // 他の設定はデフォルトのまま（保存・復元しない）
             bgColorPicker.value = CONFIG.bgColor;
             resolutionSelect.value = `${CONFIG.resolution.width}x${CONFIG.resolution.height}`;
             fpsSelect.value = String(CONFIG.fps);
