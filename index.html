@@ -1366,7 +1366,10 @@
                         <div class="control-group">
                             <label>Size</label>
                             <input type="range" id="fontSize" min="0" max="100" value="50" />
-                            <span class="value" id="fontSizeLabel">--</span>
+                            <div class="coord-input">
+                                <input type="number" id="fontSizeNumber" value="0" min="0" max="3200" />
+                                <span style="font-size:12px;color:#666;">px</span>
+                            </div>
                         </div>
                         <div class="control-group">
                             <label>Color</label>
@@ -1519,6 +1522,7 @@
             layerCount: DEFAULT_LAYER_COUNT,
             resolution: { width: 1920, height: 1080 },
             fps: 60,
+            text_wheel_step: 3
         };
         // ★ 追加: localStorageのキー
         const STORAGE_KEY = 'aj-videditor-settings';
@@ -1635,33 +1639,47 @@
         // -------- DOM要素 --------
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
+        // X,Y,Rotation等
+        const xSlider = document.getElementById('xPos');
+        const ySlider = document.getElementById('yPos');
+        const rotationSlider = document.getElementById('rotationSlider');
+        const startInput = document.getElementById('startInput');
+        const durationInput = document.getElementById('durationInput');
+        // 数値入力欄
+        const xNumber = document.getElementById('xNumber');
+        const yNumber = document.getElementById('yNumber');
+        const rotationNumber = document.getElementById('rotationNumber');
+        // テキスト
         const typeDisplay = document.getElementById('typeDisplay');
         const textProperties = document.getElementById('textProperties');
-        const shapeProperties = document.getElementById('shapeProperties');
+        // fontSize,colorPicker等
         const textInput = document.getElementById('textInput');
         const fontSelect = document.getElementById('fontSelect');
         const fontSizeSlider = document.getElementById('fontSize');
-        const fontSizeLabel = document.getElementById('fontSizeLabel');
         const colorPicker = document.getElementById('colorPicker');
+        // 数値入力欄
+        const fontSizeNumber = document.getElementById('fontSizeNumber');
+        // shape
+        const shapeProperties = document.getElementById('shapeProperties');
+        // type,Width,Height
         const shapeTypeSelect = document.getElementById('shapeTypeSelect');
         const fillColorPicker = document.getElementById('fillColorPicker');
         const strokeColorPicker = document.getElementById('strokeColorPicker');
         const strokeWidthSlider = document.getElementById('strokeWidthSlider');
         const shapeWidthSlider = document.getElementById('shapeWidthSlider');
         const shapeHeightSlider = document.getElementById('shapeHeightSlider');
-        const xSlider = document.getElementById('xPos');
-        const xNumber = document.getElementById('xNumber');
-        const ySlider = document.getElementById('yPos');
-        const yNumber = document.getElementById('yNumber');
-        const rotationSlider = document.getElementById('rotationSlider');
-        const rotationNumber = document.getElementById('rotationNumber');
-        const startInput = document.getElementById('startInput');
-        const durationInput = document.getElementById('durationInput');
-        const deleteBtn = document.getElementById('deleteBtn');
-        const timelineContainer = document.getElementById('timelineContainer');
+        // 数値入力欄
+        const strokeWidthNumber = document.getElementById('strokeWidthNumber');
+        const shapeWidthNumber = document.getElementById('shapeWidthNumber');
+        const shapeHeightNumber = document.getElementById('shapeHeightNumber');
+        // 再生開始
         const playBtn = document.getElementById('playBtn');
         const currentTimeDisplay = document.getElementById('currentTime');
         const totalTimeDisplay = document.getElementById('totalTime');
+        // 削除
+        const deleteBtn = document.getElementById('deleteBtn');
+        const timelineContainer = document.getElementById('timelineContainer');
+        // 設定
         const settingsToggle = document.getElementById('settingsToggle');
         const settingsOverlay = document.getElementById('settingsOverlay');
         const settingsClose = document.getElementById('settingsClose');
@@ -1673,24 +1691,20 @@
         const bgColorPicker = document.getElementById('bgColorPicker');
         const resolutionSelect = document.getElementById('resolutionSelect');
         const fpsSelect = document.getElementById('fpsSelect');
-        // ズーム関連DOM（後で生成するので変数だけ先に宣言）
-        let zoomInBtn;
-        let zoomOutBtn;
-        let zoomLevelDisplay;
-        // タブ用DOM
+        // タブ
         const settingsTabs = document.getElementById('settingsTabs');
         const tabProject = document.getElementById('tabProject');
         const tabEditor = document.getElementById('tabEditor');
+        // ズーム関連
+        let zoomInBtn;
+        let zoomOutBtn;
+        let zoomLevelDisplay;
         // リサイズ用DOM
         const resizeHandleHorizontal = document.getElementById('resizeHandleHorizontal');
         const resizeHandleVertical = document.getElementById('resizeHandleVertical');
         const canvasWrapper = document.getElementById('canvasWrapper');
         const propertiesPanel = document.getElementById('propertiesPanel');
         const bottomSection = document.getElementById('bottomSection');
-        // 図形用数値入力
-        const strokeWidthNumber = document.getElementById('strokeWidthNumber');
-        const shapeWidthNumber = document.getElementById('shapeWidthNumber');
-        const shapeHeightNumber = document.getElementById('shapeHeightNumber');
         // -------- キャンバスサイズ --------
         const MAX_COORD = 8000;
         const MAX_ROTATION = 1440;
@@ -2216,6 +2230,58 @@
             };
             canvas.addEventListener('mousedown', onPointerDown);
         }
+        // -------- プレビュー上のテキストをホイールでサイズ変更 --------
+        canvas.addEventListener('wheel', (e) => {
+            // マウス位置のクリップを取得
+            const pos = getCanvasCoords(e);
+            const clip = getClipAtPosition(pos.x, pos.y);
+            // テキストクリップ以外は無視
+            if (!clip || clip.type !== 'text')
+                return;
+            // ★ 重なり対応: 同じ位置に複数ある場合は最前面（layerIdが最大）を選ぶ
+            const visibleClips = getClipsAtFrame(currentFrame);
+            const textClipsAtPos = visibleClips.filter(c => {
+                var _a;
+                if (c.type !== 'text')
+                    return false;
+                const drawX = CONFIG.resolution.width / 2 + c.x;
+                const drawY = CONFIG.resolution.height / 2 + c.y;
+                const lines = ((_a = c.text) === null || _a === void 0 ? void 0 : _a.split('\n')) || [''];
+                const fontSize = c.fontSize || 48;
+                const lineHeight = fontSize * 1.2;
+                const height = lines.length * lineHeight;
+                let maxWidth = 0;
+                ctx.font = `${fontSize}px ${c.fontFamily || DEFAULT_FONT}`;
+                for (const line of lines) {
+                    const metrics = ctx.measureText(line);
+                    if (metrics.width > maxWidth)
+                        maxWidth = metrics.width;
+                }
+                const width = (maxWidth || 100) + 20;
+                const halfW = width / 2;
+                const halfH = (height + 20) / 2;
+                return pos.x >= drawX - halfW && pos.x <= drawX + halfW &&
+                    pos.y >= drawY - halfH && pos.y <= drawY + halfH;
+            });
+            // 最前面（layerIdが最大）のテキストを選ぶ
+            const targetClip = textClipsAtPos.sort((a, b) => b.layerId - a.layerId)[0];
+            if (!targetClip)
+                return;
+            // スクロール防止
+            e.preventDefault();
+            // サイズ変更
+            const delta = e.deltaY > 0 ? -CONFIG.text_wheel_step : CONFIG.text_wheel_step;
+            const currentSize = targetClip.fontSize || 50;
+            const newSize = Math.max(0, Math.min(3200, currentSize + delta));
+            targetClip.fontSize = newSize;
+            // ★ パネル連動（選択中なら更新）
+            if (selectedId === targetClip.id) {
+                fontSizeSlider.value = String(newSize);
+                fontSizeNumber.value = String(newSize);
+            }
+            drawPreview();
+            drawTimeline();
+        }, { passive: false });
         // -------- タイムライン描画 --------
         function drawTimeline() {
             const containerWidth = timelineContainer.clientWidth - 4;
@@ -2869,7 +2935,7 @@
                     textInput.value = selected.text || '';
                     fontSelect.value = selected.fontFamily || DEFAULT_FONT;
                     fontSizeSlider.value = String(selected.fontSize || 50);
-                    fontSizeLabel.textContent = `${selected.fontSize || 50}px`;
+                    fontSizeNumber.value = String(selected.fontSize || 50);
                     colorPicker.value = selected.color || '#ffffff';
                 }
                 else {
@@ -2909,7 +2975,6 @@
                 textProperties.style.display = 'none';
                 shapeProperties.style.display = 'none';
                 textInput.value = '';
-                fontSizeLabel.textContent = '--';
                 fontSelect.value = DEFAULT_FONT;
                 xNumber.value = '';
                 yNumber.value = '';
@@ -2992,6 +3057,7 @@
                 selected.fontFamily = fontSelect.value;
                 selected.fontSize = parseFloat(fontSizeSlider.value) || 50;
                 selected.color = colorPicker.value;
+                fontSizeNumber.value = String(selected.fontSize);
             }
             else if (selected.type === 'shape') {
                 selected.shapeType = shapeTypeSelect.value;
@@ -3011,7 +3077,6 @@
             xNumber.value = String(selected.x);
             yNumber.value = String(selected.y);
             rotationNumber.value = String(selected.rotation);
-            fontSizeLabel.textContent = `${selected.fontSize || 50}px`;
             autoResizeTextarea();
             drawPreview();
             drawTimeline();
@@ -3098,7 +3163,7 @@
                         drawPreview();
                     }
                 },
-                // ===== 回転 =====
+                // ===== Rotation =====
                 {
                     input: rotationNumber,
                     slider: rotationSlider,
@@ -3161,6 +3226,25 @@
                         }
                         durationInput.value = String(selected.duration);
                         drawTimeline();
+                        drawPreview();
+                    }
+                },
+                // ===== FontSize =====
+                {
+                    input: fontSizeNumber,
+                    slider: fontSizeSlider,
+                    config: NUMBER_CONFIGS.fontSize,
+                    getIsDragging: () => isDraggingFontSize,
+                    updateFn: (val) => updateSliderRangePositive(fontSizeSlider, val, SLIDER_STAGES.fontSize, false),
+                    onCommit: (val) => {
+                        const selected = getSelected();
+                        if (!selected)
+                            return;
+                        selected.fontSize = val;
+                        fontSizeSlider.value = String(val);
+                        fontSizeNumber.value = String(val);
+                        if (!isDraggingFontSize)
+                            updateSliderRangePositive(fontSizeSlider, val, SLIDER_STAGES.fontSize, false);
                         drawPreview();
                     }
                 },
@@ -3452,6 +3536,7 @@
             isDraggingFontSize = false;
             const selected = getSelected();
             if (selected) {
+                fontSizeNumber.value = String(selected.fontSize || 50);
                 updateSliderRangePositive(fontSizeSlider, selected.fontSize || 50, SLIDER_STAGES.fontSize, false);
                 drawPreview();
             }
